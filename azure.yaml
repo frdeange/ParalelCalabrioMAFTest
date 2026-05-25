@@ -1,19 +1,19 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
-name: wfm-data-assistant
 
 requiredVersions:
-  extensions:
-    "azure.ai.agents": ">=0.1.0-preview"
-
-# No `infra:` block: we deploy to an EXISTING Foundry project, so we never
-# run `azd provision`. Only `azd deploy` is used to push the container image
-# and (re)create the hosted agent on the configured Foundry project.
-
+    extensions:
+        azure.ai.agents: '>=0.1.0-preview'
+name: wfm-data-assistant
 services:
-  wfm:
-    project: ./foundry_hosted
-    host: azure.ai.agent
-    language: docker
-    docker:
-      path: ./Dockerfile
-      context: .
+    wfm:
+        project: ./foundry_hosted
+        host: azure.ai.agent
+        language: docker
+        docker:
+            path: ./Dockerfile
+            context: .
+        config:
+            container:
+                resources:
+                    cpu: "0.5"
+                    memory: 1Gi
