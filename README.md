@@ -31,20 +31,34 @@ Read sections **1 → 7** in order. Section **8** is a reference of fixes/pitfal
 
 ```
 ParalelCalabrioMAFTest/
-├── main.py                # Legacy v1 — naive SequentialBuilder([FoundryAgent, ...])
-├── main_v2.py             # ✅ Production-style pipeline with custom Executors (PRIMARY)
-├── update_agents.py       # ✅ Single script that publishes new versions of the 3 Foundry agents
+├── main_local.py             # Local MAF orchestrator (Foundry LLM + local MCP, single host)
+├── update_agents.py          # Idempotent script that (re)publishes the 3 Foundry Prompt Agents
+├── promptAgents/             # Reference YAMLs for the 3 agents (documentation only)
+│   ├── intent-classifier.yaml
+│   ├── sql-builder.yaml
+│   └── query-executor.yaml
 ├── requirements.txt
-├── .env                   # Endpoints, agent names, OTEL config (NOT committed)
-└── promptAgents/          # Reference YAMLs for the 3 agents (documentation only)
-    ├── intent-classifier.yaml
-    ├── sql-builder.yaml
-    └── query-executor.yaml
+├── azure.yaml                # azd manifest (services: foundry_hosted as a Foundry Hosted Agent)
+├── .env.example              # Sample env file (real .env is gitignored)
+└── foundry_hosted/           # Foundry HostedAgent variant (deployed via `azd deploy`)
+    ├── main_hosted.py        # Same workflow as main_local.py, wrapped in ResponsesHostServer
+    ├── Dockerfile            # python:3.13-slim image used by the hosted agent
+    ├── requirements.txt      # Pinned deps installed inside the container
+    ├── agent.yaml            # Runtime config consumed by `azd ai agent run`/`azd deploy`
+    ├── agent.manifest.yaml   # Consumed by `azd ai agent init` to scaffold the project
+    └── .dockerignore
 ```
 
+Two runtime entry points share the **same workflow** (intent → SQL builder → query executor):
+
+- `main_local.py` — MAF orchestrator runs locally; useful for development and for the
+  single-host containerized topology.
+- `foundry_hosted/main_hosted.py` — same code wrapped in `ResponsesHostServer`; deployed
+  to Foundry as a Hosted Agent and addressable through the Responses protocol.
+
 `promptAgents/*.yaml` are **only historical/reference docs** of the prompt content. The actual
-source of truth for the deployed agents is `update_agents.py` (instructions, JSON Schemas and
-structured-input declarations are embedded there as Python constants).
+source of truth for the deployed Foundry Prompt Agents is `update_agents.py` (instructions,
+JSON Schemas and structured-input declarations are embedded there as Python constants).
 
 ---
 
@@ -52,7 +66,7 @@ structured-input declarations are embedded there as Python constants).
 
 ```
                        ┌──────────────────────────────────────┐
- user_question ───►    │            main_v2.py                │
+ user_question ───►    │            main_local.py              │
  (str)                 │   SequentialBuilder workflow         │
                        │                                      │
                        │  ┌────────────┐    IntentBundle      │
@@ -330,7 +344,7 @@ Important quirks discovered:
 agents OR `Executor` subclasses. We use `Executor` subclasses to gain full control over the
 *shape* of messages flowing between steps.
 
-### 6.1 Shared pydantic models (in `main_v2.py`)
+### 6.1 Shared pydantic models (in `main_local.py`)
 
 ```python
 class IntentResult(BaseModel):
@@ -598,7 +612,7 @@ client-side networking is required.
 
 ## 10. Telemetry
 
-`main_v2.py` initializes OpenTelemetry **after** loading `.env`, so the SDK can read
+`main_local.py` initializes OpenTelemetry **after** loading `.env`, so the SDK can read
 `OTEL_EXPORTER_OTLP_ENDPOINT` (and optionally `APPLICATIONINSIGHTS_CONNECTION_STRING`):
 
 ```python
@@ -631,7 +645,7 @@ For production, gate this behind an env flag.
 python update_agents.py
 
 # 2) Run the workflow with the hardcoded sample question
-python main_v2.py
+python main_local.py
 ```
 
 Expected output (example):
@@ -735,8 +749,11 @@ pattern used by the three steps documented above.
 
 ## 15. TL;DR for an LLM consuming this README
 
-- `main_v2.py` is the canonical runtime entry point. It builds a `SequentialBuilder` of three
-  custom `Executor`s. Each executor wraps one `FoundryAgent` (referenced by name, not created).
+- `main_local.py` is the canonical local runtime entry point. It builds a `SequentialBuilder`
+  of three custom `Executor`s. Each executor wraps one `FoundryAgent` (referenced by name, not
+  created). The Foundry Hosted Agent variant `foundry_hosted/main_hosted.py` shares the same
+  workflow code; it only adds `ResponsesHostServer` so the agent is reachable via the
+  Responses protocol after `azd deploy`.
 - Each Foundry agent's definition (instructions, MCP tools, structured inputs, structured
   outputs) is the source of truth and is published from `update_agents.py` via
   `AIProjectClient.agents.create_version(...)`. **JSON formatting rules are NOT in the prompts;

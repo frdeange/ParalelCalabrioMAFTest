@@ -1,28 +1,33 @@
-"""Variant E — FoundryChatClient + 3 independent agent calls + audit
-HistoryProvider (no shared service conversation).
+"""WFM Data Assistant — Local orchestrator (Local MCP + App Insights).
 
-Why this exists
----------------
-Variants A/C/D all pinned the three agents (intent, sql-builder, query-executor)
-to the same Foundry-side conversation. MAF documentation is explicit that
-``Sessions are agent/service-specific. Reusing a session with a different agent
-configuration or provider can lead to invalid context.`` Empirically this
-manifests as the hosted MCP tools getting dropped on every agent that joins the
-shared conversation after the first one — the server fails to reattach the new
-agent's tool set on the existing session.
+What this is
+------------
+The MAF SequentialBuilder workflow (intent classifier → SQL builder → query
+executor) is orchestrated in this Python process. Foundry is only used to
+serve the LLM (``FoundryChatClient``); the agents, the executors and the MCP
+client all run locally (same host as the MAF runtime). Designed to be run
+directly or inside a single container.
 
-This variant follows the canonical pattern instead:
+Why Local MCP (vs Foundry-Hosted MCP)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Uses ``MCPStreamableHTTPTool`` (LOCAL MCP) instead of
+``FoundryChatClient.get_mcp_tool`` (HOSTED MCP). Why:
 
-1. NO shared service-side conversation. Each agent.run() is independent.
-2. Inter-agent state is passed as structured Pydantic objects through the
-   workflow graph (already how the rest of the pipeline works).
-3. Cross-agent visibility for *audit / debugging* (not model context) is
-   provided by a single ``AuditHistoryProvider`` instance shared by all three
-   ``Agent`` definitions. It has ``load_messages=False`` so the model never
-   sees other agents' turns, but ``store_inputs/outputs/context_messages=True``
-   so every message flows into one in-memory list.
-4. OpenTelemetry continues to correlate the three calls into one workflow
-   trace via W3C ``traceparent`` propagation — that is the real E2E lane.
+- Hosted MCP executes server-side in Foundry. Tool calls do NOT emit
+  ``execute_tool`` spans on the client; they only appear as content items
+  inside the LLM ``chat`` span. Empirically we also observed that with hosted
+  MCP the spans of the FIRST agent in the SequentialBuilder pipeline
+  (workflow.run root, executor.process input-conversation, executor.process
+  intent_step, invoke_agent wfm-intent-classifier, chat gpt-5.2) never reach
+  App Insights, while sql_builder/query_executor do — confirmed by a parallel
+  ConsoleSpanExporter showing MAF creates them locally but the AzureMonitor
+  exporter drops them.
+- Local MCP executes client-side. Each ``tools/call`` produces an
+  ``execute_tool`` span correlated to the workflow trace via traceparent.
+  Side-effect: ALL spans land in App Insights, including the first agent's.
+
+See also ``foundry_hosted/main_hosted.py`` for the same workflow exposed via
+``ResponsesHostServer`` as a Foundry Hosted Agent.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ import asyncio
 import json
 from collections import defaultdict
 from collections.abc import Sequence
+from contextlib import AsyncExitStack
 from typing import Any
 
 from dotenv import load_dotenv
@@ -39,48 +45,38 @@ from pydantic import BaseModel, Field
 from typing_extensions import Never
 
 from azure.identity.aio import DefaultAzureCredential
-
-from agent_framework import (
-    Agent,
-    AgentResponse,
-    Executor,
-    Message,
-    WorkflowContext,
-    handler,
-)
+from agent_framework import Agent, AgentResponse, Executor, MCPStreamableHTTPTool, Message, WorkflowContext,handler
 from agent_framework._sessions import HistoryProvider
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
-from agent_framework.observability import enable_sensitive_telemetry, configure_otel_providers, create_resource, enable_instrumentation
+from agent_framework.observability import create_resource,enable_instrumentation
 from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry import trace, metrics
 
 load_dotenv()
-configure_otel_providers()
+
 # Wire telemetry to Azure Application Insights.
 # ``configure_azure_monitor`` reads APPLICATIONINSIGHTS_CONNECTION_STRING from
 # the environment, installs the AzureMonitor exporters (traces, logs, metrics)
 # on the global OTel providers, and is the canonical way to ship MAF telemetry
-# to App Insights. ``configure_otel_providers`` (the MAF helper) is for OTLP
-# collectors / VS Code extension and does NOT export to App Insights on its own.
-enable_sensitive_telemetry()
-
+# to App Insights.
 configure_azure_monitor(
     connection_string=os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"],
     resource=create_resource(),  # Uses OTEL_SERVICE_NAME, etc.
     enable_live_metrics=True,
-    )
+)
+# Enable MAF instrumentation + capture of sensitive payloads (chat messages,
+# tool args). Called AFTER load_dotenv() so it re-reads ENABLE_SENSITIVE_DATA
+# from .env. Dev/test only — never enable sensitive data in production.
 enable_instrumentation(enable_sensitive_data=True)
 
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration (fail-fast: every setting must come from the environment)
 # ---------------------------------------------------------------------------
 
-FOUNDRY_MODEL = os.getenv("FOUNDRY_MODEL", "gpt-5.2")
-MCP_SERVER_URL = os.getenv(
-    "MCP_SERVER_URL", "https://4x59q5fx-8001.uks1.devtunnels.ms/mcp/"
-)
+FOUNDRY_MODEL = os.environ["FOUNDRY_MODEL"]
+MCP_SERVER_URL = os.environ["MCP_SERVER_URL"]
 
 
 # ---------------------------------------------------------------------------
@@ -198,18 +194,7 @@ def _render(template: str, **vars: object) -> str:
 # ---------------------------------------------------------------------------
 
 class AuditHistoryProvider(HistoryProvider):
-    """In-memory audit log for cross-agent visibility.
-
-    This provider deliberately does NOT participate in the model's context:
-    ``load_messages=False`` means ``get_messages`` is never consulted by the
-    agent harness, so nothing this provider stores is replayed back to the
-    model. We only piggyback on the ``after_run`` lifecycle to capture every
-    input/output/context message produced by any agent we are attached to.
-
-    All agents share a single instance. State lives in ``self._log`` (not in
-    the session.state dict) so it survives across independent ``agent.run()``
-    calls with different sessions.
-    """
+    """In-memory audit log for cross-agent visibility."""
 
     DEFAULT_SOURCE_ID = "audit_log"
 
@@ -230,7 +215,6 @@ class AuditHistoryProvider(HistoryProvider):
         state: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> list[Message]:
-        # load_messages=False makes the harness skip this, but be explicit.
         return []
 
     async def save_messages(  # type: ignore[override]
@@ -269,7 +253,6 @@ def _track_usage(tracker: dict, step: str, response: AgentResponse) -> None:
 
 
 def _extract_structured_text(response: AgentResponse) -> str:
-    """Return the last text-typed content's JSON, skipping tool-call items."""
     decoder = json.JSONDecoder()
     for msg in reversed(getattr(response, "messages", []) or []):
         if getattr(msg, "role", None) != "assistant":
@@ -291,7 +274,6 @@ def _extract_structured_text(response: AgentResponse) -> str:
 
 
 def _build_messages(system_text: str, user_text: str) -> list[Message]:
-    """Build a ``[system, user]`` message list rendered per call."""
     return [
         Message(role="system", contents=[system_text]),
         Message(role="user", contents=[user_text]),
@@ -458,12 +440,10 @@ async def run_turn(
 
 
 async def main() -> None:
-    user_question = os.getenv(
-        "USER_QUESTION", "¿Cuántos agentes hay en mi organización?"
-    )
-    bu_id = int(os.getenv("BU_ID", "1"))
+    user_question = os.environ["USER_QUESTION"]
+    bu_id = int(os.environ["BU_ID"])
 
-    async with DefaultAzureCredential() as credential:
+    async with DefaultAzureCredential() as credential, AsyncExitStack() as mcp_stack:
         project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
 
         # --- Single chat client reused by all three agents --------------------
@@ -473,36 +453,41 @@ async def main() -> None:
             credential=credential,
         )
 
-        # --- Hosted MCP tool configs (one allow-list per agent role) ----------
-        mcp_list = client.get_mcp_tool(
-            name="wfm-data",
-            url=MCP_SERVER_URL,
-            allowed_tools=["listTables"],
-            approval_mode="never_require",
+        # --- LOCAL MCP tools (one allow-list per agent role) ------------------
+        # Unlike hosted MCP (client.get_mcp_tool), these execute client-side.
+        # Each tools/call emits an ``execute_tool`` OTel span correlated to
+        # the workflow trace via traceparent — visible in App Insights.
+        # ``async with`` opens the MCP session (transport, listTools handshake)
+        # before any agent.run() is invoked.
+        mcp_list = await mcp_stack.enter_async_context(
+            MCPStreamableHTTPTool(
+                name="wfm-data",
+                url=MCP_SERVER_URL,
+                allowed_tools=["listTables"],
+                approval_mode="never_require",
+            )
         )
-        mcp_schema = client.get_mcp_tool(
-            name="wfm-data",
-            url=MCP_SERVER_URL,
-            allowed_tools=["getSchema"],
-            approval_mode="never_require",
+        mcp_schema = await mcp_stack.enter_async_context(
+            MCPStreamableHTTPTool(
+                name="wfm-data",
+                url=MCP_SERVER_URL,
+                allowed_tools=["getSchema"],
+                approval_mode="never_require",
+            )
         )
-        mcp_exec = client.get_mcp_tool(
-            name="wfm-data",
-            url=MCP_SERVER_URL,
-            allowed_tools=["executeQuery"],
-            approval_mode="never_require",
+        mcp_exec = await mcp_stack.enter_async_context(
+            MCPStreamableHTTPTool(
+                name="wfm-data",
+                url=MCP_SERVER_URL,
+                allowed_tools=["executeQuery"],
+                approval_mode="never_require",
+            )
         )
 
         # --- Shared audit-only history provider -------------------------------
-        # One instance, attached to all three agents. load_messages=False keeps
-        # it out of the model context; after_run() captures every input/output
-        # into self._log so we have one place to inspect the whole workflow.
         audit = AuditHistoryProvider()
 
         # --- Three client-side agents (independent, no shared conv) -----------
-        # Instructions are injected per call as a system Message so we can
-        # render placeholders ({{intentResult}}, {{buId}}, {{sqlPlan}}, …)
-        # fresh each turn.
         intent_agent = Agent(
             client=client,
             name="wfm-intent-classifier",
@@ -541,13 +526,12 @@ async def main() -> None:
 
         _print_usage_report(
             usage,
-            label="variant E — FoundryChatClient, independent agents + audit HistoryProvider",
+            label="Local MCP (MCPStreamableHTTPTool) + App Insights",
         )
         _print_audit_log(audit)
 
     # Force-flush OTel exporters so spans / logs / metrics actually leave the
-    # process before it exits. Without this, BatchSpanProcessor's queue can be
-    # discarded on interpreter shutdown and the trace never reaches App Insights.
+    # process before it exits (both AzureMonitor and Console processors).
     tracer_provider = trace.get_tracer_provider()
     if hasattr(tracer_provider, "force_flush"):
         tracer_provider.force_flush(timeout_millis=10_000)

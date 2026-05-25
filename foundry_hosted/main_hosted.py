@@ -1,25 +1,47 @@
-"""Variant G — Local MCP (MCPStreamableHTTPTool) + App Insights telemetry.
+"""WFM Data Assistant — Foundry Hosted Agent (Responses protocol).
 
-Differences vs main_v5.py
--------------------------
-Uses ``MCPStreamableHTTPTool`` (LOCAL MCP) instead of
-``FoundryChatClient.get_mcp_tool`` (HOSTED MCP). Why:
+What this is
+------------
+The same MAF workflow as ``main_local.py`` (FoundryChatClient + 3 ``Agent``
+instances + Local ``MCPStreamableHTTPTool`` + custom executors +
+``AuditHistoryProvider``), wrapped with ``ResponsesHostServer`` so it can be
+deployed as a Foundry Hosted Agent on http://localhost:8088.
 
-- Hosted MCP executes server-side in Foundry. Tool calls do NOT emit
-  ``execute_tool`` spans on the client; they only appear as content items
-  inside the LLM ``chat`` span. Empirically we also observed that with hosted
-  MCP the spans of the FIRST agent in the SequentialBuilder pipeline
-  (workflow.run root, executor.process input-conversation, executor.process
-  intent_step, invoke_agent wfm-intent-classifier, chat gpt-5.2) never reach
-  App Insights, while sql_builder/query_executor do — confirmed by a parallel
-  ConsoleSpanExporter showing MAF creates them locally but the AzureMonitor
-  exporter drops them.
-- Local MCP executes client-side. Each ``tools/call`` produces an
-  ``execute_tool`` span correlated to the workflow trace via traceparent.
-  Side-effect: ALL spans land in App Insights, including the first agent's.
+Why a Hosted Agent (vs Foundry Prompt Agents)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Foundry Hosted Agents run the entire MAF workflow inside a container that
+Foundry manages — your code IS the agent. This sidesteps every PromptAgent
+constraint we hit during earlier experiments (no client tools, no per-call
+``response_format``, missing first-agent telemetry) because the request is
+served by our local code: there is no service-side agent runtime in the path.
 
-Everything else (audit provider, 3 executors, response_format, force_flush) is
-identical to v5.
+Net effect:
+
+- All 27+ workflow spans land in App Insights (same Local MCP path as the
+  local variant).
+- The workflow becomes addressable as an Agent via ``/responses``.
+- ``azd deploy`` packages this code into a container and registers it as a
+  hosted agent on the configured Foundry project.
+
+Lifecycle
+~~~~~~~~~
+``ResponsesHostServer`` registers a ``shutdown_handler`` that calls the
+agent's ``__aexit__`` (see ``_responses.py`` line ~365). Because
+``WorkflowAgent`` inherits from ``BaseAgent`` (no async-context-manager
+hooks), we cannot rely on the host to enter our MCP tools transitively
+through the wrapper. Instead we open the MCP sessions ourselves via
+``AsyncExitStack`` BEFORE ``await server.run_async()`` and let the stack
+close on shutdown / Ctrl-C.
+
+Run locally
+-----------
+::
+
+    python main_hosted.py
+    # then in another terminal:
+    curl -X POST http://localhost:8088/responses \\
+      -H "Content-Type: application/json" \\
+      -d '{"input": "\u00bfCu\u00e1ntos agentes hay en mi organizaci\u00f3n?"}'
 """
 
 from __future__ import annotations
@@ -27,7 +49,6 @@ from __future__ import annotations
 import os
 import asyncio
 import json
-from collections import defaultdict
 from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from typing import Any
@@ -37,44 +58,62 @@ from pydantic import BaseModel, Field
 from typing_extensions import Never
 
 from azure.identity.aio import DefaultAzureCredential
-from agent_framework import Agent, AgentResponse, Executor, MCPStreamableHTTPTool, Message, WorkflowContext,handler
+from agent_framework import (
+    Agent,
+    AgentResponse,
+    Executor,
+    MCPStreamableHTTPTool,
+    Message,
+    WorkflowContext,
+    handler,
+)
 from agent_framework._sessions import HistoryProvider
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
-from agent_framework.observability import create_resource,enable_instrumentation
+from agent_framework.observability import create_resource, enable_instrumentation
+from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.monitor.opentelemetry import configure_azure_monitor
-from opentelemetry import trace, metrics
 
 load_dotenv()
 
-# Wire telemetry to Azure Application Insights.
-# ``configure_azure_monitor`` reads APPLICATIONINSIGHTS_CONNECTION_STRING from
-# the environment, installs the AzureMonitor exporters (traces, logs, metrics)
-# on the global OTel providers, and is the canonical way to ship MAF telemetry
-# to App Insights.
-configure_azure_monitor(
-    connection_string=os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"],
-    resource=create_resource(),  # Uses OTEL_SERVICE_NAME, etc.
-    enable_live_metrics=True,
+# Telemetry bootstrap. When deployed to Foundry, the `microsoft-opentelemetry`
+# distro already configures Tracer/Meter/Logger providers from the injected
+# APPLICATIONINSIGHTS_CONNECTION_STRING. Calling `configure_azure_monitor`
+# again in that environment triggers harmless "Overriding of current
+# *Provider is not allowed" warnings. To keep the same code working locally
+# *and* hosted, only configure when Foundry's hosted bit is NOT set.
+_IS_HOSTED = bool(os.getenv("AGENT_SERVER_HOSTED")) or bool(
+    os.getenv("FOUNDRY_AGENT_NAME")
 )
-# Enable MAF instrumentation + capture of sensitive payloads (chat messages,
-# tool args). Called AFTER load_dotenv() so it re-reads ENABLE_SENSITIVE_DATA
-# from .env. Dev/test only — never enable sensitive data in production.
+if not _IS_HOSTED:
+    configure_azure_monitor(
+        connection_string=os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"],
+        resource=create_resource(),
+        enable_live_metrics=True,
+    )
 enable_instrumentation(enable_sensitive_data=True)
 
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration (fail-fast: every setting must come from the environment)
 # ---------------------------------------------------------------------------
 
-FOUNDRY_MODEL = os.getenv("FOUNDRY_MODEL", "gpt-5.2")
-MCP_SERVER_URL = os.getenv(
-    "MCP_SERVER_URL", "https://4x59q5fx-8001.uks1.devtunnels.ms/mcp/"
+# When deployed to Foundry, the model deployment name is injected as
+# AZURE_AI_MODEL_DEPLOYMENT_NAME. Locally we use FOUNDRY_MODEL. Exactly one of
+# them must be set; if neither is, fail loudly.
+FOUNDRY_MODEL = (
+    os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME")
+    or os.environ["FOUNDRY_MODEL"]
 )
+MCP_SERVER_URL = os.environ["MCP_SERVER_URL"]
+# BU scope is a config concern for this experiment, not extracted from each
+# inbound HTTP request. To make it per-call later, parse it out of the request
+# in a custom Invocations handler or smuggle it via a custom header.
+BU_ID = int(os.environ["BU_ID"])
 
 
 # ---------------------------------------------------------------------------
-# Schemas (used both as response_format and as inter-step payloads)
+# Schemas (same as v7)
 # ---------------------------------------------------------------------------
 
 class IntentResult(BaseModel):
@@ -105,7 +144,7 @@ class SqlBundle(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Instructions (templated with {{placeholder}} markers, rendered per-call)
+# Instructions (identical to v7)
 # ---------------------------------------------------------------------------
 
 INTENT_INSTRUCTIONS_TPL = """\
@@ -176,7 +215,6 @@ Rules:
 
 
 def _render(template: str, **vars: object) -> str:
-    """Replace ``{{name}}`` markers with the str() of the supplied keyword values."""
     out = template
     for key, value in vars.items():
         out = out.replace("{{" + key + "}}", str(value))
@@ -184,11 +222,13 @@ def _render(template: str, **vars: object) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Audit-only HistoryProvider
+# Audit-only HistoryProvider (cross-agent in-memory store)
 # ---------------------------------------------------------------------------
 
 class AuditHistoryProvider(HistoryProvider):
-    """In-memory audit log for cross-agent visibility (see main_v5.py docstring)."""
+    """Same provider as v7. The host warns about in-memory state being lost
+    between container deactivations — fine for local dev; switch to Cosmos
+    or a similar backend before deploying via ``azd deploy``."""
 
     DEFAULT_SOURCE_ID = "audit_log"
 
@@ -235,16 +275,8 @@ class AuditHistoryProvider(HistoryProvider):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers (identical to v7)
 # ---------------------------------------------------------------------------
-
-def _track_usage(tracker: dict, step: str, response: AgentResponse) -> None:
-    usage = getattr(response, "usage_details", None) or {}
-    bucket = tracker.setdefault(step, defaultdict(int))
-    for key, value in usage.items():
-        if isinstance(value, int):
-            bucket[key] += value
-
 
 def _extract_structured_text(response: AgentResponse) -> str:
     decoder = json.JSONDecoder()
@@ -274,45 +306,16 @@ def _build_messages(system_text: str, user_text: str) -> list[Message]:
     ]
 
 
-def _print_usage_report(tracker: dict, label: str) -> None:
-    print(f"\n===== Token usage ({label}) =====")
-    totals: dict[str, int] = defaultdict(int)
-    for step, usage in tracker.items():
-        parts = ", ".join(f"{k}={v}" for k, v in usage.items())
-        print(f"  [{step}] {parts}")
-        for k, v in usage.items():
-            totals[k] += v
-    print("  ---")
-    parts = ", ".join(f"{k}={v}" for k, v in totals.items())
-    print(f"  [TOTAL] {parts}")
-
-
-def _print_audit_log(audit: AuditHistoryProvider) -> None:
-    print("\n===== Audit log (cross-agent in-memory store) =====")
-    for i, entry in enumerate(audit.log):
-        author = entry.get("author") or entry.get("role") or "?"
-        text = (entry.get("text") or "").strip().replace("\n", " ")
-        if len(text) > 160:
-            text = text[:160] + "…"
-        print(f"  [{i:02d}] {author}: {text}")
-
-
 # ---------------------------------------------------------------------------
-# Custom executors (no shared conversation_id; just structured payloads)
+# Custom executors (identical to v7, but without per-call usage tracking —
+# tokens are already captured by MAF instrumentation as span attributes)
 # ---------------------------------------------------------------------------
 
 class IntentStep(Executor):
-    def __init__(
-        self,
-        agent: Agent,
-        bu_id: int,
-        usage_tracker: dict,
-        id: str = "intent_step",
-    ) -> None:
+    def __init__(self, agent: Agent, bu_id: int, id: str = "intent_step") -> None:
         super().__init__(id=id)
         self._agent = agent
         self._bu_id = bu_id
-        self._usage = usage_tracker
 
     @handler
     async def run(
@@ -329,7 +332,6 @@ class IntentStep(Executor):
             messages,
             options={"response_format": IntentResult},
         )
-        _track_usage(self._usage, "intent", response)
         intent = IntentResult.model_validate_json(_extract_structured_text(response))
         await ctx.send_message(
             IntentBundle(
@@ -341,15 +343,9 @@ class IntentStep(Executor):
 
 
 class SqlBuilderStep(Executor):
-    def __init__(
-        self,
-        agent: Agent,
-        usage_tracker: dict,
-        id: str = "sql_builder_step",
-    ) -> None:
+    def __init__(self, agent: Agent, id: str = "sql_builder_step") -> None:
         super().__init__(id=id)
         self._agent = agent
-        self._usage = usage_tracker
 
     @handler
     async def run(
@@ -368,7 +364,6 @@ class SqlBuilderStep(Executor):
             messages,
             options={"response_format": SqlPlan},
         )
-        _track_usage(self._usage, "sql_builder", response)
         plan = SqlPlan.model_validate_json(_extract_structured_text(response))
         await ctx.send_message(
             SqlBundle(
@@ -380,15 +375,9 @@ class SqlBuilderStep(Executor):
 
 
 class QueryExecutorStep(Executor):
-    def __init__(
-        self,
-        agent: Agent,
-        usage_tracker: dict,
-        id: str = "query_executor_step",
-    ) -> None:
+    def __init__(self, agent: Agent, id: str = "query_executor_step") -> None:
         super().__init__(id=id)
         self._agent = agent
-        self._usage = usage_tracker
 
     @handler
     async def run(
@@ -403,58 +392,27 @@ class QueryExecutorStep(Executor):
         )
         messages = _build_messages(rendered, bundle.user_question)
         response = await self._agent.run(messages)
-        _track_usage(self._usage, "query_executor", response)
         await ctx.yield_output(AgentResponse(messages=response.messages))
 
 
 # ---------------------------------------------------------------------------
-# Wire-up
+# Main
 # ---------------------------------------------------------------------------
 
-async def run_turn(
-    user_question: str,
-    bu_id: int,
-    intent_agent: Agent,
-    sql_builder_agent: Agent,
-    query_executor_agent: Agent,
-) -> tuple[AgentResponse | None, dict]:
-    usage_tracker: dict = {}
-
-    workflow = SequentialBuilder(
-        participants=[
-            IntentStep(intent_agent, bu_id=bu_id, usage_tracker=usage_tracker),
-            SqlBuilderStep(sql_builder_agent, usage_tracker=usage_tracker),
-            QueryExecutorStep(query_executor_agent, usage_tracker=usage_tracker),
-        ]
-    ).build()
-
-    events = await workflow.run(user_question)
-    outputs = events.get_outputs()
-    return (outputs[0] if outputs else None), usage_tracker
-
-
 async def main() -> None:
-    user_question = os.getenv(
-        "USER_QUESTION", "¿Cuántos agentes hay en mi organización?"
-    )
-    bu_id = int(os.getenv("BU_ID", "1"))
+    project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
 
     async with DefaultAzureCredential() as credential, AsyncExitStack() as mcp_stack:
-        project_endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
-
-        # --- Single chat client reused by all three agents --------------------
         client = FoundryChatClient(
             project_endpoint=project_endpoint,
             model=FOUNDRY_MODEL,
             credential=credential,
         )
 
-        # --- LOCAL MCP tools (one allow-list per agent role) ------------------
-        # Unlike hosted MCP (client.get_mcp_tool), these execute client-side.
-        # Each tools/call emits an ``execute_tool`` OTel span correlated to
-        # the workflow trace via traceparent — visible in App Insights.
-        # ``async with`` opens the MCP session (transport, listTools handshake)
-        # before any agent.run() is invoked.
+        # Local MCP — entered eagerly so the connection is ready before the
+        # first HTTP request. ``WorkflowAgent`` does not propagate
+        # ``__aenter__`` to inner agents, so the host's lazy entry would never
+        # reach the MCP tools.
         mcp_list = await mcp_stack.enter_async_context(
             MCPStreamableHTTPTool(
                 name="wfm-data",
@@ -480,60 +438,55 @@ async def main() -> None:
             )
         )
 
-        # --- Shared audit-only history provider -------------------------------
         audit = AuditHistoryProvider()
 
-        # --- Three client-side agents (independent, no shared conv) -----------
+        # ``store=False`` per Foundry hosting guidance: the hosting layer
+        # manages conversation history; storing again on the service side
+        # would duplicate state.
+        common_options = {"store": False}
+
         intent_agent = Agent(
             client=client,
             name="wfm-intent-classifier",
             tools=[mcp_list],
             context_providers=[audit],
+            default_options=common_options,
         )
         sql_builder_agent = Agent(
             client=client,
             name="wfm-sql-builder",
             tools=[mcp_schema],
             context_providers=[audit],
+            default_options=common_options,
         )
         query_executor_agent = Agent(
             client=client,
             name="wfm-query-executor",
             tools=[mcp_exec],
             context_providers=[audit],
+            default_options=common_options,
         )
 
-        final, usage = await run_turn(
-            user_question=user_question,
-            bu_id=bu_id,
-            intent_agent=intent_agent,
-            sql_builder_agent=sql_builder_agent,
-            query_executor_agent=query_executor_agent,
+        workflow = SequentialBuilder(
+            participants=[
+                IntentStep(intent_agent, bu_id=BU_ID),
+                SqlBuilderStep(sql_builder_agent),
+                QueryExecutorStep(query_executor_agent),
+            ]
+        ).build()
+
+        workflow_agent = workflow.as_agent(
+            name="wfm-data-assistant",
+            description="WFM data assistant: classifies intent, builds a "
+            "scoped SQL query, executes it, and answers in the user's language.",
         )
 
-        if not final:
-            print("No output produced by the workflow.")
-            return
-
-        print("\n===== Final Response =====")
-        for msg in final.messages:
-            author = msg.author_name or "assistant"
-            print(f"[{author}]\n{msg.text}\n")
-
-        _print_usage_report(
-            usage,
-            label="variant G — Local MCP (MCPStreamableHTTPTool) + App Insights",
+        server = ResponsesHostServer(workflow_agent)
+        print(
+            "Hosted agent ready on http://localhost:8088/responses "
+            f"(bu_id={BU_ID}, model={FOUNDRY_MODEL}). Ctrl-C to stop."
         )
-        _print_audit_log(audit)
-
-    # Force-flush OTel exporters so spans / logs / metrics actually leave the
-    # process before it exits (both AzureMonitor and Console processors).
-    tracer_provider = trace.get_tracer_provider()
-    if hasattr(tracer_provider, "force_flush"):
-        tracer_provider.force_flush(timeout_millis=10_000)
-    meter_provider = metrics.get_meter_provider()
-    if hasattr(meter_provider, "force_flush"):
-        meter_provider.force_flush(timeout_millis=10_000)
+        await server.run_async()
 
 
 if __name__ == "__main__":

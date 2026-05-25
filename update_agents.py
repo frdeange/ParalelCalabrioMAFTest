@@ -34,8 +34,11 @@ from azure.ai.projects.models import (
 
 load_dotenv()
 
-MODEL = "gpt-5.2"
-MCP_SERVER_URL = "https://4x59q5fx-8001.uks1.devtunnels.ms/mcp/"
+# Fail-fast: both settings must come from the environment (.env locally,
+# azd env / Foundry injection in deployment). No hardcoded defaults so we
+# never commit the MCP endpoint to source control.
+MODEL = os.environ["FOUNDRY_MODEL"]
+MCP_SERVER_URL = os.environ["MCP_SERVER_URL"]
 
 
 # ---------------------------------------------------------------------------

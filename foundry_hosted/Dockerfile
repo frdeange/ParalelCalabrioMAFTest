@@ -1,4 +1,4 @@
-# Foundry Hosted Agent container for the WFM Data Assistant (main_v9.py).
+# Foundry Hosted Agent container for the WFM Data Assistant (main_hosted.py).
 #
 # The hosting platform listens on port 8088 by default. Foundry injects
 # FOUNDRY_PROJECT_ENDPOINT, AZURE_AI_MODEL_DEPLOYMENT_NAME and
@@ -20,4 +20,4 @@ RUN if [ -f requirements.txt ]; then \
 
 EXPOSE 8088
 
-CMD ["python", "main_v9.py"]
+CMD ["python", "main_hosted.py"]

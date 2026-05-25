@@ -1,12 +1,19 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
-name: ai-foundry-starter-basic
-
-infra:
-  provider: bicep
-  path: ./infra
+name: wfm-data-assistant
 
 requiredVersions:
   extensions:
-    # the azd ai agent extension is required for this template
     "azure.ai.agents": ">=0.1.0-preview"
 
+# No `infra:` block: we deploy to an EXISTING Foundry project, so we never
+# run `azd provision`. Only `azd deploy` is used to push the container image
+# and (re)create the hosted agent on the configured Foundry project.
+
+services:
+  wfm:
+    project: ./foundry_hosted
+    host: azure.ai.agent
+    language: docker
+    docker:
+      path: ./Dockerfile
+      context: .
