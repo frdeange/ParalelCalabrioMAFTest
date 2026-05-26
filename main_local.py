@@ -75,7 +75,7 @@ enable_instrumentation(enable_sensitive_data=True)
 # Configuration (fail-fast: every setting must come from the environment)
 # ---------------------------------------------------------------------------
 
-FOUNDRY_MODEL = os.environ["FOUNDRY_MODEL"]
+FOUNDRY_MODEL = os.environ["FOUNDRY_DEPLOYMENT_NAME"]
 MCP_SERVER_URL = os.environ["MCP_SERVER_URL"]
 
 

@@ -37,7 +37,7 @@ load_dotenv()
 # Fail-fast: both settings must come from the environment (.env locally,
 # azd env / Foundry injection in deployment). No hardcoded defaults so we
 # never commit the MCP endpoint to source control.
-MODEL = os.environ["FOUNDRY_MODEL"]
+MODEL = os.environ["FOUNDRY_DEPLOYMENT_NAME"]
 MCP_SERVER_URL = os.environ["MCP_SERVER_URL"]
 
 
