@@ -40,13 +40,16 @@ ParalelCalabrioMAFTest/
 ├── requirements.txt
 ├── azure.yaml                # azd manifest (services: foundry_hosted as a Foundry Hosted Agent)
 ├── .env.example              # Sample env file (real .env is gitignored)
-└── foundry_hosted/           # Foundry HostedAgent variant (deployed via `azd deploy`)
-    ├── main_hosted.py        # Same workflow as main_local.py, wrapped in ResponsesHostServer
-    ├── Dockerfile            # python:3.13-slim image used by the hosted agent
-    ├── requirements.txt      # Pinned deps installed inside the container
-    ├── agent.yaml            # Runtime config consumed by `azd ai agent run`/`azd deploy`
-    ├── agent.manifest.yaml   # Consumed by `azd ai agent init` to scaffold the project
-    └── .dockerignore
+├── foundry_hosted/           # Foundry HostedAgent variant (deployed via `azd deploy`)
+│   ├── main_hosted.py        # Same workflow as main_local.py, wrapped in ResponsesHostServer
+│   ├── Dockerfile            # python:3.13-slim image used by the hosted agent
+│   ├── requirements.txt      # Pinned deps installed inside the container
+│   ├── agent.yaml            # Runtime config consumed by `azd ai agent run`/`azd deploy`
+│   ├── agent.manifest.yaml   # Consumed by `azd ai agent init` to scaffold the project
+│   └── .dockerignore
+└── scripts/                  # Operational scripts for the Hosted Agent (see § 16)
+    ├── preflight-check.sh    # Pre-deploy validation: CLI, env, MI, RBAC, MCP
+    └── deploy-hosted-agent.sh # End-to-end deploy: preflight + RBAC fix + azd deploy + smoke test
 ```
 
 Two runtime entry points share the **same workflow** (intent → SQL builder → query executor):
@@ -765,3 +768,287 @@ pattern used by the three steps documented above.
   to verify it.
 - The pipeline is observability-ready: telemetry is configured via `configure_otel_providers()`
   + `enable_sensitive_telemetry()` after `load_dotenv()`.
+
+---
+
+## 16. Hosted Agent Deployment (`azd deploy`) — full guide
+
+This section captures the exact prerequisites, identities, RBAC, and runtime
+configuration needed to deploy `foundry_hosted/main_hosted.py` to a Foundry
+project. Most of these requirements are **not obvious** from the docs and were
+discovered the hard way; the [`scripts/`](./scripts/) directory automates the
+fixes.
+
+### 16.1 Two-script workflow — TL;DR
+
+```bash
+# 0) First time only — scaffold the azd project from the manifest
+azd ai agent init -m ./foundry_hosted/agent.manifest.yaml
+azd env new wfm-data-assistant            # pick any name; this becomes AZURE_ENV_NAME
+
+# 1) Set the values the manifest expects
+azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-5.2
+azd env set BU_ID 1
+azd env set MCP_SERVER_URL "https://<your-devtunnel-or-public-mcp-url>/mcp/"
+# AZURE_TENANT_ID is needed by the azd postdeploy hook on some versions:
+azd env set AZURE_TENANT_ID "$(az account show --query tenantId -o tsv)"
+
+# 2) Verify everything before paying for a deploy
+./scripts/preflight-check.sh
+
+# 3) Deploy (fixes missing RBAC, deploys, smoke-tests)
+./scripts/deploy-hosted-agent.sh --fix-rbac
+```
+
+The deploy script is **idempotent** — safe to re-run after partial failures.
+
+### 16.2 What `scripts/preflight-check.sh` validates
+
+| # | Check | Why it matters |
+|---|---|---|
+| 1 | `az`, `azd`, `docker`, `curl`, `jq`/`python3`, `azure.ai.agents` azd extension | `azd deploy` requires Docker locally to build the image and the azd extension `azure.ai.agents` to wire up Foundry-specific resources. |
+| 2 | Active `az login` + active subscription | Both `azd` and `az` reuse your token; without a fresh sign-in `azd deploy` falls back to device-code or fails. |
+| 3 | `azd env` populated with all required vars (see § 16.4) | Missing `AZURE_AI_MODEL_DEPLOYMENT_NAME` or `MCP_SERVER_URL` causes container start to crash with `KeyError`. |
+| 4 | Foundry **account** + **project** exist and **both have system-assigned MIs enabled** | The two MIs are the principals that pull the image and talk to the agent's own runtime storage. |
+| 5 | ACR exists | `azd deploy` pushes the image here. |
+| 6 | `AcrPull` granted to both Foundry MIs on the ACR | Without this the container `ImagePullBackOff`s after `azd deploy` reports success. |
+| 7 | **`Foundry User` granted to both Foundry MIs at the *account* scope** | THIS IS THE FIX. Without it, the agent's `/responses` call internally fails with `Foundry storage GET …/storage/history/item_ids -> 401` and the client sees `HTTP 500 PermissionDenied`. See § 16.5. |
+| 8 | MCP server URL reachable | The agent reaches MCP from inside the Foundry-managed network. If you use a devtunnel, the tunnel must be running; if MCP talks to Azure SQL, the SQL firewall must allow your dev host. |
+
+### 16.3 The three managed identities involved
+
+There are **three** distinct principals you need to be aware of:
+
+| Identity | Where it lives | Used for | Auto-created? |
+|---|---|---|---|
+| **Foundry account MI** | System-assigned MI on the AI Services account | Pulls the container image from ACR | Yes (when the account is created with `identity.type=SystemAssigned`). |
+| **Foundry project MI** | System-assigned MI on the project sub-resource | Image pull + project-level data plane | Yes (when the project is created with `identity.type=SystemAssigned`). |
+| **Agent runtime MI** | Per-agent instance identity managed by Foundry | Token presented by the container when it calls back into `/storage/history`, `/conversations`, etc. | Yes — Foundry mints/rotates it; not directly visible in the Azure portal. Resolve it via REST: `GET {endpoint}/agents/{name}` → `instance_identity.principal_id`. |
+
+The Foundry account MI and project MI are the ones you can see with:
+
+```bash
+az cognitiveservices account show -n <account> -g <rg> --query identity.principalId -o tsv
+az resource show --ids <project_id> --api-version 2025-06-01 --query identity.principalId -o tsv
+```
+
+The agent runtime MI is fetched at the end of `deploy-hosted-agent.sh` via the
+Foundry REST API.
+
+### 16.4 Required `azd env` variables
+
+The `azd env get-value <var>` interface is the canonical source for the variables consumed by the deploy. After `azd ai agent init`, the manifest populates many of these automatically; you only need to set the ones marked **(user-set)**.
+
+| Variable | Set by | Used by |
+|---|---|---|
+| `AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID`, `AZURE_LOCATION`, `AZURE_RESOURCE_GROUP` | `azd ai agent init` (mostly) | `az`/`azd` plumbing. `AZURE_TENANT_ID` you may need to set manually (see § 16.7). |
+| `AZURE_AI_PROJECT_ID`, `FOUNDRY_PROJECT_ENDPOINT` | `azd ai agent init` | All Foundry SDK calls. |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | **(user-set)** | Container reads it as the chat model name. `${AZURE_AI_MODEL_DEPLOYMENT_NAME}` template in `agent.yaml` resolves to this. |
+| `AZURE_CONTAINER_REGISTRY_ENDPOINT` | `azd provision` / pre-existing | Image push target. |
+| `BU_ID` | **(user-set)** | Workflow scoping. |
+| `MCP_SERVER_URL` | **(user-set)** | Agent's MCP tool endpoint. |
+| `AGENT_WFM_NAME`, `AGENT_WFM_VERSION`, `AGENT_WFM_ENDPOINT`, `AGENT_WFM_RESPONSES_ENDPOINT` | Populated by `azd deploy` post-success | Reference values for invoking the agent. |
+
+### 16.5 The storage-401 trap (§ #1 hidden requirement)
+
+When the agent receives a `/responses` request, the agent-server SDK fetches
+conversation history from Foundry's **managed** memory store
+(`Microsoft.CognitiveServices`) at the URL
+`{endpoint}/api/projects/{project}/storage/history/item_ids?api-version=v1`.
+
+This call uses **the Foundry MI's token** (account MI + project MI flow). If
+neither MI has `Foundry User` on the **account** scope, the call returns 401
+and the inbound `/responses` request fails with HTTP 500
+`PermissionDenied`.
+
+The Foundry docs (Memory page — see references below) say:
+
+> Assign **Foundry User** to the managed identity of your project.
+>
+> Troubleshooting → "Requests fail with an authentication or authorization
+> error → Your identity *or the project managed identity* doesn't have the
+> required roles."
+
+Memory in Foundry Agent Service is **fully managed** — there is **no**
+storage account you need to create. The 401 is solely a missing role
+assignment.
+
+The cure (run automatically by `scripts/deploy-hosted-agent.sh --fix-rbac`):
+
+```bash
+SCOPE="/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<foundry-account>"
+
+for PID in <ACCOUNT_MI_PID> <PROJECT_MI_PID>; do
+  az role assignment create \
+    --assignee-object-id "$PID" \
+    --assignee-principal-type ServicePrincipal \
+    --role "53ca6127-db72-4b80-b1b0-d745d6d5456d" \
+    --scope "$SCOPE"
+done
+```
+
+Role definition IDs (well-known, don't change):
+
+| Role | ID |
+|---|---|
+| AcrPull | `7f951dda-4ed3-4680-a7ca-43fe172d538d` |
+| Foundry User | `53ca6127-db72-4b80-b1b0-d745d6d5456d` |
+| Foundry Owner | `c883944f-8b7b-4483-af10-35834be79c4a` |
+| Foundry Account Owner | `e47c6f54-e4a2-4754-9501-8e0985b135e1` |
+| Foundry Project Manager | `eadc314b-1a2d-4efa-be10-5d325db5065e` |
+
+Note: the older role names (`Azure AI User`, `Azure AI Owner`, etc.) are
+synonyms — same role IDs, different display names.
+
+### 16.6 Reserved environment variables in `agent.yaml`
+
+The Foundry hosting platform **reserves** any env var starting with
+`FOUNDRY_*` or `AGENT_*` for its own purposes (Foundry injects them at
+runtime). If you declare one in `agent.yaml` (e.g. `FOUNDRY_MODEL`), the
+container fails to start with an error like:
+
+```
+Reserved environment variable name: FOUNDRY_MODEL
+```
+
+The fix is to use a non-reserved alias and read it from your code:
+
+```yaml
+# agent.yaml
+environment_variables:
+  - name: AZURE_AI_MODEL_DEPLOYMENT_NAME   # NOT reserved → declare freely
+    value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+```
+
+```python
+# main_hosted.py
+FOUNDRY_MODEL = (
+    os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME")
+    or os.environ["FOUNDRY_MODEL"]   # fallback for local dev
+)
+```
+
+The platform auto-injects these without you declaring them — never declare
+them in `agent.yaml`:
+
+- `FOUNDRY_PROJECT_ENDPOINT`
+- `FOUNDRY_AGENT_NAME`
+- `FOUNDRY_AGENT_VERSION`
+- `APPLICATIONINSIGHTS_CONNECTION_STRING`
+- `AGENT_SERVER_HOSTED` (the marker we read to detect hosted mode)
+
+### 16.7 Postdeploy 404 — cosmetic, ignore it
+
+After `Deploying service wfm: Done`, you may see:
+
+```
+ERROR: failed invoking event handlers for 'postdeploy', failed to fetch
+agent version for wfm/6: GET …/agents/wfm/versions/6 → 404
+```
+
+The postdeploy hook in some `azd` versions looks up the agent by **azd
+service name** (`wfm`) instead of by the actual **agent name**
+(`wfm-data-assistant`). The deploy itself succeeded — verify with:
+
+```bash
+az ai agent show -e wfm-data-assistant  # azd shorthand
+# or
+azd ai agent show
+```
+
+The newer `azure.ai.agents` extension fixed this; if you're affected, set
+`AZURE_TENANT_ID` in your azd env to keep the hook from also complaining
+about missing tenant. The script treats this as non-fatal.
+
+### 16.8 Enabling rich GenAI tracing
+
+The Foundry hosting platform pre-configures `microsoft-opentelemetry` to ship
+spans to App Insights via `APPLICATIONINSIGHTS_CONNECTION_STRING`. To get
+**rich** spans that include `gen_ai.system`, prompt/completion text, and
+tool-call arguments/results, set this env var in `agent.yaml`:
+
+```yaml
+environment_variables:
+  - name: AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING
+    value: "true"
+```
+
+Without it you'll see the warning in container logs:
+
+```
+azure.ai.projects.telemetry._ai_project_instrumentor:
+GenAI tracing is not enabled. Set environment variable
+AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING=true
+```
+
+This is already enabled in the committed `agent.yaml` and
+`agent.manifest.yaml`.
+
+### 16.9 What the deploy script actually does
+
+Reading `scripts/deploy-hosted-agent.sh` top-to-bottom:
+
+```text
+0. Resolve identities (account MI, project MI, ACR ID, account scope) from
+   the active azd env (no hard-coded values).
+
+1. Run preflight-check.sh.
+   - If it reports missing RBAC and --fix-rbac was passed, continue;
+     otherwise exit 1 and print the role-assignment commands to run.
+
+2. If --fix-rbac:
+   - Idempotently create the four required role assignments
+     (AcrPull × 2, Foundry User × 2).
+
+3. Run `azd deploy --no-prompt`.
+   - Tolerates the cosmetic postdeploy 404 (see § 16.7).
+
+4. Resolve the agent runtime MI via Foundry REST
+   (GET /agents/<name> → instance_identity.principal_id) and grant
+   Foundry User to it as well (defensive — usually unnecessary).
+
+5. Sleep 60 s for RBAC propagation when --fix-rbac applied changes.
+
+6. Smoke-test via `azd ai agent invoke --new-conversation --new-session`.
+   - Surfaces "PermissionDenied" as a clear failure indicating RBAC
+     propagation isn't complete yet.
+```
+
+### 16.10 Troubleshooting cheatsheet
+
+| Symptom | Likely cause | Resolution |
+|---|---|---|
+| `azd deploy` exits with `Reserved environment variable name: FOUNDRY_*` | You declared a reserved var in `agent.yaml` | Remove it; use an `AZURE_AI_*` alias and read both keys in code. |
+| `ImagePullBackOff` after `azd deploy` reports success | Foundry MI(s) missing `AcrPull` on the ACR | `./scripts/deploy-hosted-agent.sh --fix-rbac` |
+| `HTTP 500 PermissionDenied` returned to the client; container logs show `Foundry storage GET .../storage/history/item_ids -> 401` | Foundry MI(s) missing `Foundry User` on the **account** scope | Same — `--fix-rbac` |
+| Container crashes on start: `KeyError: 'FOUNDRY_MODEL'` | Neither `FOUNDRY_MODEL` (local) nor `AZURE_AI_MODEL_DEPLOYMENT_NAME` (hosted) is set | `azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME <model-deployment>` |
+| MCP tool calls fail with `Database '...' is not currently available` (SQL error 40613) | Azure SQL serverless paused **or** firewall blocking the dev host | Cold-start: retry after 30–60 s. Firewall: add your dev host IP to the Azure SQL firewall rules. |
+| `azd deploy` fails with `Docker daemon not running` in dev container | Docker-in-docker not enabled | Add the dev container feature `ghcr.io/devcontainers/features/docker-in-docker:2` and rebuild the container. |
+| Postdeploy: `AZURE_TENANT_ID not set` | Older `azd` postdeploy hook needs it explicitly | `azd env set AZURE_TENANT_ID "$(az account show --query tenantId -o tsv)"` |
+| Container logs: `GenAI tracing is not enabled` warning | `AZURE_EXPERIMENTAL_ENABLE_GENAI_TRACING` not declared | Already declared in `agent.yaml`; re-deploy. |
+
+### 16.11 Inspecting the deployed agent
+
+```bash
+# Stream container logs (latest invocation session)
+azd ai agent monitor --tail 200
+
+# Inspect the deployed agent + version + endpoints
+azd ai agent show
+
+# Direct REST inspection (no SDK)
+TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  "$(azd env get-value FOUNDRY_PROJECT_ENDPOINT)/agents/$(azd env get-value AGENT_WFM_NAME)?api-version=v1" \
+  | python3 -m json.tool
+
+# Send a one-off message
+azd ai agent invoke --new-conversation --new-session "¿Cuántos agentes hay en mi organización?"
+```
+
+### 16.12 References
+
+- [Foundry Hosted Agents — Memory usage docs (the source of the Foundry User requirement)](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/memory-usage?pivots=python)
+- [Foundry RBAC roles](https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry)
+- [`azd` AI agents extension](https://github.com/Azure/azd-ext-ai-agents)
+
