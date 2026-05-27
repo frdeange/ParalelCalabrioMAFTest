@@ -24,3 +24,6 @@ environment_variables:
     value: ${BU_ID}
   - name: MCP_SERVER_URL
     value: ${MCP_SERVER_URL}
+  # Conversation persistence is handled by Foundry's native workflow
+  # checkpoint store (/sessions/$HOME) — no external storage env vars
+  # required.

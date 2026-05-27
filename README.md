@@ -31,7 +31,8 @@ Read sections **1 → 7** in order. Section **8** is a reference of fixes/pitfal
 
 ```
 ParalelCalabrioMAFTest/
-├── main_local.py             # Local MAF orchestrator (Foundry LLM + local MCP, single host)
+├── main_local.py             # Local MAF orchestrator — single-turn (Foundry LLM + local MCP)
+├── main_local_multiturn.py   # Local MAF orchestrator — multi-turn REPL with Cosmos DB history
 ├── update_agents.py          # Idempotent script that (re)publishes the 3 Foundry Prompt Agents
 ├── promptAgents/             # Reference YAMLs for the 3 agents (documentation only)
 │   ├── intent-classifier.yaml
@@ -40,9 +41,10 @@ ParalelCalabrioMAFTest/
 ├── requirements.txt
 ├── azure.yaml                # azd manifest (services: foundry_hosted as a Foundry Hosted Agent)
 ├── .env.example              # Sample env file (real .env is gitignored)
-├── foundry_hosted/           # Foundry HostedAgent variant (deployed via `azd deploy`)
-│   ├── main_hosted.py        # Same workflow as main_local.py, wrapped in ResponsesHostServer
-│   ├── Dockerfile            # python:3.13-slim image used by the hosted agent
+├── foundry_hosted/           # Foundry Hosted Agent variants (deployed via `azd deploy`)
+│   ├── main_hosted.py        # Hosted variant backed by Cosmos DB history (blocked — see § 17)
+│   ├── main_hosted_native.py # Hosted variant backed by Foundry native checkpoints (ACTIVE — v9)
+│   ├── Dockerfile            # python:3.13-slim; CMD points to main_hosted_native.py
 │   ├── requirements.txt      # Pinned deps installed inside the container
 │   ├── agent.yaml            # Runtime config consumed by `azd ai agent run`/`azd deploy`
 │   ├── agent.manifest.yaml   # Consumed by `azd ai agent init` to scaffold the project
@@ -52,12 +54,18 @@ ParalelCalabrioMAFTest/
     └── deploy-hosted-agent.sh # End-to-end deploy: preflight + RBAC fix + azd deploy + smoke test
 ```
 
-Two runtime entry points share the **same workflow** (intent → SQL builder → query executor):
+Three runtime entry points share the **same workflow** (intent → SQL builder → query executor):
 
-- `main_local.py` — MAF orchestrator runs locally; useful for development and for the
-  single-host containerized topology.
-- `foundry_hosted/main_hosted.py` — same code wrapped in `ResponsesHostServer`; deployed
-  to Foundry as a Hosted Agent and addressable through the Responses protocol.
+- `main_local.py` — single-turn local REPL; useful for quick development and smoke-testing.
+- `main_local_multiturn.py` — multi-turn local REPL with Cosmos DB-backed conversation history.
+  **This is the production-ready local variant** (see § 17 for current project status).
+- `foundry_hosted/main_hosted_native.py` — same workflow wrapped in `ResponsesHostServer` with
+  multi-turn backed by **Foundry native workflow checkpoints** (no external storage required).
+  Currently deployed as Foundry Hosted Agent v9. Functional but with known observability
+  limitations (see § 17).
+
+`foundry_hosted/main_hosted.py` is kept as a reference/rollback: it uses `CosmosHistoryProvider`
+for history but cannot run in the hosted environment due to a platform identity gap (see § 17.2).
 
 `promptAgents/*.yaml` are **only historical/reference docs** of the prompt content. The actual
 source of truth for the deployed Foundry Prompt Agents is `update_agents.py` (instructions,
@@ -1051,4 +1059,218 @@ azd ai agent invoke --new-conversation --new-session "¿Cuántos agentes hay en 
 - [Foundry Hosted Agents — Memory usage docs (the source of the Foundry User requirement)](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/memory-usage?pivots=python)
 - [Foundry RBAC roles](https://learn.microsoft.com/en-us/azure/foundry/concepts/rbac-foundry)
 - [`azd` AI agents extension](https://github.com/Azure/azd-ext-ai-agents)
+
+---
+
+## 17. Project status & known platform gaps (May 2026)
+
+This section documents **where the project stands**, the platform limitation
+discovered when trying to wire Cosmos DB to the Foundry Hosted Agent, the
+exhaustive investigation that confirmed it, and the two viable alternatives.
+
+### 17.1 What works today (verified end-to-end)
+
+| Variant | File | Multi-turn | Persistence | Status |
+|---|---|---|---|---|
+| Local single-turn | `main_local.py` | ❌ | — | ✅ Works |
+| Local multi-turn | `main_local_multiturn.py` | ✅ | Cosmos DB | ✅ Works (uses your `az login` identity) |
+| Hosted — native checkpoints | `foundry_hosted/main_hosted_native.py` | ✅ | Foundry workflow checkpoints | ✅ Deployed as v9, 3-turn validated |
+| Hosted — Cosmos | `foundry_hosted/main_hosted.py` | ✅ (code correct) | Cosmos DB | ❌ Blocked — see § 17.2 |
+
+### 17.2 The Cosmos DB × Foundry Hosted Agent platform gap
+
+#### Background
+
+`main_local_multiturn.py` uses `CosmosHistoryProvider` from
+`agent-framework-azure-cosmos` to persist conversation history.  When it runs
+locally, `DefaultAzureCredential` resolves to your `az login` user token, which
+has `Cosmos DB Built-in Data Contributor` assigned — so it works perfectly.
+
+When the same code runs inside a Foundry Hosted Agent container,
+`DefaultAzureCredential` resolves to the **agent's runtime identity** instead.
+This is where the gap surfaces.
+
+#### The agent runtime identity: `ServiceIdentity`
+
+Every Foundry Hosted Agent version is assigned a dedicated principal by the
+Foundry platform. You can inspect it via:
+
+```bash
+TOKEN=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  "$(azd env get-value FOUNDRY_PROJECT_ENDPOINT)/agents/wfm-data-assistant?api-version=v1" \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d['instance_identity'],indent=2))"
+# → {"principal_id": "b5849610-…", "client_id": "b5849610-…"}
+```
+
+Querying Microsoft Graph for that principal reveals:
+
+```json
+{
+  "@odata.type": "#microsoft.graph.agentIdentity",
+  "id": "b5849610-eeb0-41d1-8173-be7aef376bfd",
+  "displayName": "calabriomafpoc-foundry-…-wfm-data-assistant-AgentIdentity",
+  "servicePrincipalType": "ServiceIdentity"
+}
+```
+
+This is **not** a regular `ServicePrincipal`, `ManagedIdentity`, or `User`. It
+is a new Entra principal subtype introduced for agentic workloads
+(`microsoft.graph.agentIdentity` / `ServiceIdentity`).
+
+#### Why Cosmos DB data-plane RBAC rejects it
+
+Cosmos DB uses its own RBAC engine (`az cosmosdb sql role assignment`) that is
+entirely separate from ARM RBAC. Internally, the Cosmos RBAC engine resolves
+the principal type via Microsoft Graph. Its internal whitelist only accepts:
+
+| Accepted | Rejected |
+|---|---|
+| `User` | `ServiceIdentity` ← agent runtime |
+| `Group` | |
+| `ServicePrincipal` | |
+| `ManagedIdentity` | |
+
+When you try to create a Cosmos SQL role assignment for a `ServiceIdentity`
+principal, the CLI silently returns `{"status": "Enqueued"}` but the assignment
+is never written. Polling for the assignment returns `404 NotFound`. Attempting
+to invoke the agent then yields:
+
+```
+(Forbidden) Request blocked by Auth calabriomafpoc-cosmos:
+Request is blocked because principal [b5849610-…] does not have required RBAC
+permissions to perform action [Microsoft.DocumentDB/databaseAccounts/readMetadata].
+ActivityId: …, Code: Forbidden
+```
+
+#### Every bypass that was attempted and why it failed
+
+| Approach | Why it fails |
+|---|---|
+| `az cosmosdb sql role assignment create --principal-id <agent-pid>` | CLI returns `Enqueued`, assignment never lands. Principal type rejected server-side. |
+| Raw ARM `PUT .../sqlRoleAssignments/<guid>?api-version=2024-08-15` | Returns `HTTP 202 {"status":"Enqueued"}`, then `GET` returns `404`. The Cosmos control-plane silently discards the write because it cannot map `ServiceIdentity` to a supported type. |
+| Same with `api-version=2025-11-01-preview` | Identical behaviour — same silent rejection. |
+| `az role assignment create --assignee-principal-type ServicePrincipal` (the ARM RBAC trick) | `--assignee-principal-type` is an **ARM RBAC** flag. `az cosmosdb sql role assignment create` has no equivalent; Cosmos data-plane RBAC has no such override. |
+| Using the blueprint identity (`principal_id: 39754795-…`, `type: Application`) instead | The blueprint identity is the design-time app registration, not the token presented by the running container. The container token always uses the `instance_identity` (`ServiceIdentity`). |
+| Using `AZURE_CLIENT_ID` env var to force a specific client ID at token acquisition | The credential chain inside the container resolves to the agent's own identity regardless; there is no hook to substitute a different UAMI at this level via `agent.yaml`. |
+
+#### Root cause summary
+
+Cosmos DB data-plane RBAC was designed before Entra introduced `ServiceIdentity`
+(the `microsoft.graph.agentIdentity` subtype). Its internal principal resolver
+treats any unrecognized type as `Unfamiliar` and refuses to create assignments
+for it. This is a **Cosmos DB × Foundry identity compatibility gap at the
+platform level** — not a configuration mistake. It requires a fix from the
+Azure Cosmos DB and/or Microsoft Foundry teams.
+
+#### Evidence trail
+
+```
+App Insights / container logs confirmed:
+- HTTP 403, x-ms-substatus: 5301
+- Principal: b5849610-eeb0-41d1-8173-be7aef376bfd
+- Action: Microsoft.DocumentDB/databaseAccounts/readMetadata
+- Resource: dbs/agent-framework/colls/chat-history
+
+Graph API confirmed:
+- @odata.type: #microsoft.graph.agentIdentity
+- servicePrincipalType: ServiceIdentity
+- createdByAppId: 0736f41a-0425-4b46-bdb5-1563eff02385 (Microsoft Foundry SP)
+
+ARM RBAC list confirmed (for contrast):
+- Project MI (5ed45ef1-…, type ManagedIdentity): AcrPull ✅, Foundry User ✅
+- Account MI (f04da8ed-…, type ManagedIdentity): same ✅
+- Agent instance_identity (b5849610-…, type ServiceIdentity): CANNOT receive Cosmos data-plane role
+```
+
+### 17.3 Alternative A evaluated: Azure Blob Storage
+
+Azure Blob Storage uses **ARM RBAC** (not a separate engine), which accepts
+`--assignee-principal-type ServicePrincipal` as an override. This means:
+
+```bash
+az role assignment create \
+  --assignee-object-id "b5849610-…" \
+  --assignee-principal-type ServicePrincipal \   # ← this works in ARM RBAC
+  --role "ba92f5b4-2d11-453d-a403-e96b0029c9fe" \  # Storage Blob Data Contributor
+  --scope "/subscriptions/…/storageAccounts/<account>"
+```
+
+This path is viable and has been confirmed to work via `ensure_assignment` in
+`scripts/deploy-hosted-agent.sh`. It requires:
+
+1. A new Storage Account (or a container within an existing one).
+2. A `BlobHistoryProvider` class (~80 LOC) using `azure-storage-blob.aio`.
+3. Replacing `CosmosHistoryProvider` in `main_hosted.py`.
+4. Adding `AZURE_STORAGE_*` env vars to `agent.yaml`.
+
+Not yet implemented; kept as a documented option for future iterations.
+
+### 17.4 Alternative B chosen: Foundry native workflow checkpoints
+
+The `ResponsesHostServer._handle_inner_workflow` code in the MAF SDK
+(`agent_framework_foundry_hosting._responses`) implements multi-turn workflow
+execution via **MAF workflow checkpoints** on a `FileCheckpointStorage` keyed
+by the inbound `conversation_id` (or `previous_response_id`) and stored on the
+Foundry session's persistent filesystem (`/sessions/$HOME`).
+
+Key insight: the `WorkflowContext` exposed to every `Executor` provides
+`get_state(key, default)` / `set_state(key, value)`. The MAF runner serialises
+this `State` dict into every checkpoint. Foundry restores it on the next turn
+before running the workflow again. This is exactly equivalent to what we were
+doing with Cosmos — except the storage backend is built into the platform.
+
+The implementation (`main_hosted_native.py`) makes three changes vs the Cosmos
+variant:
+
+| Before (Cosmos) | After (native checkpoints) |
+|---|---|
+| `prior = await self._provider.get_messages(sid)` | `prior_entries = ctx.get_state("history_messages", [])` |
+| `await self._provider.save_messages(sid, [...])` | `ctx.set_state("history_messages", updated)` |
+| `_SESSION_ID_CTX` + custom `response_handler` wrapper | Removed — Foundry keys checkpoints automatically |
+| `AZURE_COSMOS_*` env vars in `agent.yaml` | Removed — no external storage |
+
+#### Validated end-to-end (2026-05-26, Foundry Hosted Agent v9)
+
+```
+Turn 1  "¿Cuántos agentes activos hay en mi organización?"
+→ "Hay 50 agentes activos en tu organización."
+
+Turn 2  "¿y cuántos de esos pertenecen al equipo 1?"   ← anaphora: "de esos" = agentes activos
+→ "Hay 0 agentes activos que pertenecen al equipo 1."
+→ IntentStep resolved "de esos" via prior history from checkpoint ✅
+
+Turn 3  "Resume brevemente lo que hemos hablado hasta ahora"  ← meta-question
+→ "Me preguntaste cuántos agentes activos hay (50). Luego cuántos del equipo 1 (0)."
+→ recall_conversation tool served snapshot from _HISTORY_SNAPSHOT_CTX ✅
+```
+
+No Cosmos traffic. No 403. Zero new Azure resources.
+
+#### Known limitation: conversation grouping in Foundry UI
+
+When the client chains turns via `previous_response_id` (the default for
+`azd ai agent invoke`), each response lands under a different checkpoint
+directory (keyed by its own `response_id`). The Foundry Traces UI displays each
+response as a separate row because there is no server-side `conv_*` object
+linking them. Functionally the multi-turn works correctly; the limitation is
+purely observational.
+
+To get proper grouping in the UI, the client must:
+1. Create a conversation object server-side:
+   `POST {endpoint}/conversations?api-version=2025-11-15-preview`
+2. Pass it in every request body: `{"input":"…","conversation":"conv_abc123"}`
+
+This forces `context.conversation_id` to be set, which causes Foundry to use a
+single stable checkpoint directory for all turns of that conversation and groups
+them in the UI.
+
+### 17.5 Recommended path forward
+
+| Goal | Recommended action |
+|---|---|
+| **Development / demos / internal use** | Run `main_local_multiturn.py` directly. Full Cosmos-backed multi-turn, App Insights traces, `recall_conversation` tool — everything works with your `az login` identity. |
+| **Production Foundry Hosted Agent** | Keep `main_hosted_native.py` (v9). Multi-turn works. If UI conversation grouping matters, add `conv_*` creation to the client. |
+| **Hosted Agent + Cosmos history** | Implement `BlobHistoryProvider` (Alternative A, §17.3) or wait for Microsoft to add `ServiceIdentity` support to Cosmos data-plane RBAC. |
+| **Cross-conversation memory / bu_id indexing** | Either Alternative A (Blob with custom index) or waiting for Cosmos fix. Native checkpoints are per-conversation silos. |
 

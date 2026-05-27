@@ -16,7 +16,11 @@
 #    (this is the requirement most often missed — without it the hosted
 #    agent gets 401 from `/storage/history/item_ids` and every /responses
 #    call returns 500 PermissionDenied)
-# 7. MCP endpoint is reachable
+# 7. Cosmos DB account exists and the Foundry project MI has the
+#    Cosmos DB Built-in Data Contributor role (data-plane RBAC).
+#    Without this the hosted agent's persistence + recall_conversation
+#    tool 403 against Cosmos.
+# 8. MCP endpoint is reachable
 #
 # Usage
 # -----
@@ -26,9 +30,10 @@
 #   0 — ready to deploy
 #   1 — missing CLI or login
 #   2 — missing azd env vars
-#   3 — Foundry/ACR resources not found / MI disabled
-#   4 — RBAC missing (script will print the exact `az role assignment create`
-#       commands you need to run)
+#   3 — Foundry/ACR/Cosmos resources not found / MI disabled
+#   4 — RBAC missing (script will print the exact `az ...` commands
+#       you need to run; Cosmos uses `az cosmosdb sql role assignment
+#       create`, the rest use `az role assignment create`)
 #   5 — MCP unreachable
 
 set -uo pipefail
@@ -121,6 +126,9 @@ REQUIRED_VARS=(
   AZURE_CONTAINER_REGISTRY_ENDPOINT
   BU_ID
   MCP_SERVER_URL
+  AZURE_COSMOS_ENDPOINT
+  AZURE_COSMOS_DATABASE_NAME
+  AZURE_COSMOS_CONTAINER_NAME
 )
 
 MISSING_VARS=()
@@ -231,8 +239,68 @@ hdr "7. Foundry User on account (CRITICAL — fixes storage 401)"
 check_assignment "$ACCOUNT_MI_PID" "$FOUNDRY_USER_ROLE" "$FOUNDRY_ACCOUNT_ID" "Foundry User → Foundry account MI (account scope)"
 check_assignment "$PROJECT_MI_PID" "$FOUNDRY_USER_ROLE" "$FOUNDRY_ACCOUNT_ID" "Foundry User → Foundry project MI (account scope)"
 
-#--- 8. MCP reachable ------------------------------------------------------
-hdr "8. MCP server reachability"
+#--- 8. Cosmos DB account + data-plane RBAC --------------------------------
+hdr "8. Cosmos DB (conversation history backend)"
+COSMOS_ENDPOINT=$(azd env get-value AZURE_COSMOS_ENDPOINT)
+COSMOS_DB=$(azd env get-value AZURE_COSMOS_DATABASE_NAME)
+COSMOS_CONT=$(azd env get-value AZURE_COSMOS_CONTAINER_NAME)
+# Endpoint shape: https://<account>.documents.azure.com:443/
+COSMOS_ACCOUNT=$(echo "$COSMOS_ENDPOINT" | sed -E 's|^https://([^.]+)\..*$|\1|')
+
+COSMOS_ID=$(az cosmosdb show -n "$COSMOS_ACCOUNT" -g "$RG" --query id -o tsv 2>/dev/null || true)
+if [[ -z "$COSMOS_ID" ]]; then
+  err "Cosmos account '${COSMOS_ACCOUNT}' not found in RG '${RG}'"
+  ERRORS=$((ERRORS+1))
+else
+  ok "Cosmos account:       ${COSMOS_ACCOUNT}"
+
+  # Verify database + container exist
+  if az cosmosdb sql database show -a "$COSMOS_ACCOUNT" -g "$RG" -n "$COSMOS_DB" >/dev/null 2>&1; then
+    ok "Cosmos database:      ${COSMOS_DB}"
+  else
+    err "Cosmos database '${COSMOS_DB}' not found in account '${COSMOS_ACCOUNT}'"
+    ERRORS=$((ERRORS+1))
+  fi
+  if az cosmosdb sql container show -a "$COSMOS_ACCOUNT" -g "$RG" -d "$COSMOS_DB" -n "$COSMOS_CONT" >/dev/null 2>&1; then
+    ok "Cosmos container:     ${COSMOS_CONT}"
+  else
+    err "Cosmos container '${COSMOS_CONT}' not found in database '${COSMOS_DB}'"
+    ERRORS=$((ERRORS+1))
+  fi
+
+  # Data-plane RBAC: Cosmos DB Built-in Data Contributor (well-known ID).
+  # NOTE: this is NOT Azure RBAC — it uses the data-plane role API
+  # `az cosmosdb sql role assignment`. The role id below is the well-known
+  # GUID and is identical across every Cosmos NoSQL account.
+  COSMOS_CONTRIB_ROLE="00000000-0000-0000-0000-000000000002"
+
+  check_cosmos_assignment() {
+    local pid="$1" label="$2"
+    if [[ -z "$pid" ]]; then return; fi
+    local count
+    count=$(az cosmosdb sql role assignment list \
+              --account-name "$COSMOS_ACCOUNT" \
+              --resource-group "$RG" \
+              --query "[?principalId=='$pid' && (roleDefinitionId=='/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.DocumentDB/databaseAccounts/${COSMOS_ACCOUNT}/sqlRoleDefinitions/${COSMOS_CONTRIB_ROLE}' || ends_with(roleDefinitionId,'${COSMOS_CONTRIB_ROLE}'))] | length(@)" \
+              -o tsv 2>/dev/null || echo "0")
+    if [[ "$count" -ge 1 ]]; then
+      ok "${label}"
+    else
+      err "${label} — MISSING"
+      RBAC_FIXES+=("az cosmosdb sql role assignment create --account-name $COSMOS_ACCOUNT --resource-group $RG --scope \"/\" --principal-id $pid --role-definition-id $COSMOS_CONTRIB_ROLE")
+      ERRORS=$((ERRORS+1))
+    fi
+  }
+
+  # Foundry project MI is what `DefaultAzureCredential()` resolves to inside
+  # the Hosted Agent container, so it MUST have data-plane access. The
+  # account MI is not strictly required (hosting layer never touches Cosmos
+  # itself) but we check it for symmetry with the Foundry User pattern.
+  check_cosmos_assignment "$PROJECT_MI_PID" "Cosmos Data Contributor → Foundry project MI (account scope)"
+fi
+
+#--- 9. MCP reachable ------------------------------------------------------
+hdr "9. MCP server reachability"
 MCP_URL=$(azd env get-value MCP_SERVER_URL 2>/dev/null || echo "")
 if [[ -z "$MCP_URL" ]]; then
   err "MCP_SERVER_URL not set"

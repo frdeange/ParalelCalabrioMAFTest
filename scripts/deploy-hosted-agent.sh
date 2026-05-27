@@ -13,9 +13,12 @@
 #       a. AcrPull on the ACR for both Foundry MIs
 #       b. Foundry User on the Foundry account for both Foundry MIs
 #          (THE FIX without which /storage/history/item_ids returns 401)
+#       c. Cosmos DB Built-in Data Contributor on the Cosmos account
+#          for the Foundry project MI (data-plane RBAC, separate API)
 # 3. azd deploy (builds & pushes the image, creates new agent version).
 # 4. Resolve the new agent runtime MI principalId and (optionally) grant
-#    Foundry User at account scope so it can read its own storage.
+#    Foundry User + Cosmos Data Contributor at account scope so it can
+#    read its own storage and the conversation history container.
 #    Re-deploys typically reuse the same agent identity; this is a no-op then.
 # 5. Wait for RBAC propagation.
 # 6. Smoke test via `azd ai agent invoke`.
@@ -102,6 +105,17 @@ ok "Project MI:           ${PROJECT_MI_PID:-(none)}"
 
 ACR_PULL_ROLE="7f951dda-4ed3-4680-a7ca-43fe172d538d"
 FOUNDRY_USER_ROLE="53ca6127-db72-4b80-b1b0-d745d6d5456d"
+# Cosmos DB Built-in Data Contributor — well-known data-plane role id,
+# same across every Cosmos NoSQL account.
+COSMOS_CONTRIB_ROLE="00000000-0000-0000-0000-000000000002"
+
+# Cosmos account name derived from the endpoint:
+#   https://<account>.documents.azure.com:443/  ->  <account>
+COSMOS_ENDPOINT=$(azd env get-value AZURE_COSMOS_ENDPOINT 2>/dev/null || true)
+COSMOS_ACCOUNT=""
+if [[ -n "$COSMOS_ENDPOINT" ]]; then
+  COSMOS_ACCOUNT=$(echo "$COSMOS_ENDPOINT" | sed -E 's|^https://([^.]+)\..*$|\1|')
+fi
 
 #--- 1. Preflight ----------------------------------------------------------
 if $RUN_PREFLIGHT; then
@@ -150,12 +164,49 @@ ensure_assignment() {
   fi
 }
 
+# Cosmos data-plane RBAC uses a different API and a built-in role id.
+# Scope "/" = whole account. We use `ends_with` to match the role-definition
+# id regardless of subscription path differences.
+ensure_cosmos_assignment() {
+  local pid="$1" label="$2"
+  if [[ -z "$pid" ]]; then warn "${label} — no principalId, skipping"; return; fi
+  if [[ -z "$COSMOS_ACCOUNT" ]]; then warn "${label} — no Cosmos account, skipping"; return; fi
+  local count
+  count=$(az cosmosdb sql role assignment list \
+            --account-name "$COSMOS_ACCOUNT" \
+            --resource-group "$RG" \
+            --query "[?principalId=='$pid' && ends_with(roleDefinitionId,'${COSMOS_CONTRIB_ROLE}')] | length(@)" \
+            -o tsv 2>/dev/null || echo "0")
+  if [[ "$count" -ge 1 ]]; then
+    ok "${label} — already present"
+  else
+    if az cosmosdb sql role assignment create \
+          --account-name "$COSMOS_ACCOUNT" \
+          --resource-group "$RG" \
+          --scope "/" \
+          --principal-id "$pid" \
+          --role-definition-id "$COSMOS_CONTRIB_ROLE" >/dev/null 2>&1; then
+      ok "${label} — created"
+    else
+      err "${label} — FAILED to create"
+      return 1
+    fi
+  fi
+}
+
 if $FIX_RBAC; then
   hdr "Ensuring RBAC (idempotent)"
   ensure_assignment "$ACCOUNT_MI_PID" "$ACR_PULL_ROLE"     "$ACR_ID"            "AcrPull → Account MI"
   ensure_assignment "$PROJECT_MI_PID" "$ACR_PULL_ROLE"     "$ACR_ID"            "AcrPull → Project MI"
   ensure_assignment "$ACCOUNT_MI_PID" "$FOUNDRY_USER_ROLE" "$FOUNDRY_ACCOUNT_ID" "Foundry User → Account MI"
   ensure_assignment "$PROJECT_MI_PID" "$FOUNDRY_USER_ROLE" "$FOUNDRY_ACCOUNT_ID" "Foundry User → Project MI"
+
+  # Cosmos data-plane (separate API: `az cosmosdb sql role assignment`).
+  if [[ -n "$COSMOS_ACCOUNT" ]]; then
+    ensure_cosmos_assignment "$PROJECT_MI_PID" "Cosmos Data Contributor → Project MI"
+  else
+    warn "AZURE_COSMOS_ENDPOINT not set — skipping Cosmos data-plane RBAC"
+  fi
 fi
 
 #--- 3. azd deploy ---------------------------------------------------------
@@ -192,6 +243,14 @@ if [[ -n "$AGENT_RUNTIME_PID" ]]; then
   # at account scope. This is a no-op if Foundry already configured it.
   ensure_assignment "$AGENT_RUNTIME_PID" "$FOUNDRY_USER_ROLE" "$FOUNDRY_ACCOUNT_ID" \
     "Foundry User → Agent runtime MI" || true
+  # The hosted container resolves `DefaultAzureCredential()` to this MI when
+  # calling Cosmos, so it also needs data-plane access. Only attempt this
+  # when the user opted into --fix-rbac (we don't have an --assignee path
+  # for Cosmos and creation requires Cosmos role-assignment write).
+  if $FIX_RBAC && [[ -n "$COSMOS_ACCOUNT" ]]; then
+    ensure_cosmos_assignment "$AGENT_RUNTIME_PID" \
+      "Cosmos Data Contributor → Agent runtime MI" || true
+  fi
 else
   warn "Could not resolve agent runtime MI (this is usually fine — Foundry manages it transparently)"
 fi

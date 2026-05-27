@@ -1,79 +1,77 @@
-"""WFM Data Assistant — Foundry Hosted Agent (Responses protocol, MULTITURN).
+"""WFM Data Assistant — Foundry Hosted Agent (MULTITURN via native checkpoints).
 
-What this is
-------------
-The same MAF workflow as ``main_local_multiturn.py`` (FoundryChatClient +
-3 ``Agent`` instances + Local ``MCPStreamableHTTPTool`` + custom executors +
-``CosmosHistoryProvider``), wrapped with ``ResponsesHostServer`` so it can be
-deployed as a Foundry Hosted Agent on http://localhost:8088.
+Variant of ``main_hosted.py`` that uses **Foundry's native workflow checkpoint
+persistence** (filesystem under ``/sessions/$HOME``) instead of Azure Cosmos
+DB. Created as a parallel file so we can A/B-test the approach before
+deciding which path ships.
 
-Multiturn + persistence design
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Unlike the local REPL, the hosted server is request-driven. Each
-``POST /responses`` brings only the new user turn — Foundry's hosting
-layer does NOT prepend prior conversation messages to a workflow agent's
-input (it manages declarative workflow state via checkpoints, which is
-useless for our short single-shot workflow). Therefore we:
+Why this exists
+---------------
+Cosmos DB data-plane RBAC refuses the Foundry agent's identity (principal
+type ``ServiceIdentity`` / ``microsoft.graph.agentIdentity``), and no
+workaround exists in current API versions. Rather than introduce a new
+storage backend (Blob, etc.), this variant rides on what Foundry already
+gives us for free.
 
-1. Receive the conversation/session identifier from the request via a
-   custom response handler that wraps the framework's default. We use
-   ``context.conversation_id`` (set when the caller passes a top-level
-   ``conversation: "<id>"`` or ``conversation: {"id": "<id>"}`` per the
-   Responses API), falling back to ``request.previous_response_id``.
-   The identifier is stashed in a ContextVar that the workflow executors
-   read.
-2. ``IntentStep`` hydrates prior history from Cosmos using that session_id,
-   appends the new user message, applies a sliding window, and feeds the
-   classifier so coreference ("those", "y de esos") resolves correctly.
-3. ``QueryExecutorStep`` persists the (user, assistant) pair to Cosmos
-   after the final answer is produced. This matches the local REPL's
-   "atomic save at end" semantics.
-4. A ``recall_conversation`` function tool is wired ONLY to the executor;
-   it reads the same Cosmos session via the ContextVar so the executor
-   can answer meta-questions ("summarize what we discussed").
+How Foundry persists workflow state
+-----------------------------------
+``ResponsesHostServer._handle_inner_workflow`` (SDK ``_responses.py``)
+implements multi-turn workflow runs via **MAF workflow checkpoints** on a
+``FileCheckpointStorage`` rooted at a directory keyed by the inbound
+``context_id`` (``context.conversation_id`` when set, otherwise
+``request.previous_response_id``). On each turn it:
 
-Sessions are OPTIONAL. If the caller does not send a ``conversation`` id,
-the request runs single-turn (no hydration, no persistence). Persistent
-multiturn requires the client to pass the same conversation id on every
-call of a conversation.
+1. Resolves ``context_id`` from the incoming request.
+2. Restores the latest checkpoint for that key (if any), bringing back the
+   workflow's shared state.
+3. Runs the workflow with the new input.
+4. Writes a fresh checkpoint to ``write_context_id``
+   (``conversation_id`` when set, else current ``response_id``).
 
-Why a Hosted Agent (vs Foundry Prompt Agents)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Foundry Hosted Agents run the entire MAF workflow inside a container that
-Foundry manages — your code IS the agent. This sidesteps every PromptAgent
-constraint we hit during earlier experiments (no client tools, no per-call
-``response_format``, missing first-agent telemetry) because the request is
-served by our local code: there is no service-side agent runtime in the path.
+In the hosted environment the checkpoint directory lives under
+``/sessions/$HOME``, the persistent filesystem of the Foundry session
+(15 min idle deprovision → state preserved → restored on resume, 30 day max).
 
-Net effect:
+How we plug into it
+-------------------
+MAF Workflows expose a per-workflow shared ``State`` (key/value store) via
+``WorkflowContext.get_state(key, default)`` / ``set_state(key, value)``.
+The runner serialises that state into every checkpoint, so Foundry
+restores it transparently across turns.
 
-- All 27+ workflow spans land in App Insights (same Local MCP path as the
-  local variant).
-- The workflow becomes addressable as an Agent via ``/responses``.
-- ``azd deploy`` packages this code into a container and registers it as a
-  hosted agent on the configured Foundry project.
+This variant:
 
-Lifecycle
-~~~~~~~~~
-``ResponsesHostServer`` registers a ``shutdown_handler`` that calls the
-agent's ``__aexit__`` (see ``_responses.py`` line ~365). Because
-``WorkflowAgent`` inherits from ``BaseAgent`` (no async-context-manager
-hooks), we cannot rely on the host to enter our MCP tools transitively
-through the wrapper. Instead we open the MCP sessions ourselves via
-``AsyncExitStack`` BEFORE ``await server.run_async()`` and let the stack
-close on shutdown / Ctrl-C.
+1. Removes the Cosmos provider entirely (no ``CosmosHistoryProvider`` import,
+   no session ContextVar, no custom response handler).
+2. ``IntentStep`` reads prior history from
+   ``ctx.get_state("history_messages", [])``, appends the new user turn,
+   windows it, and feeds the classifier.
+3. ``QueryExecutorStep`` appends ``(user, assistant)`` to the same key and
+   writes it back via ``ctx.set_state(...)``. The runner picks it up at
+   the superstep boundary; Foundry's host writes the checkpoint at the end
+   of the run.
+4. The ``recall_conversation`` function tool reads from a per-request
+   ContextVar that ``QueryExecutorStep`` populates with the prior history
+   snapshot just before invoking the executor agent.
+
+Trade-offs vs the Cosmos variant
+--------------------------------
+- ✅ Zero new infrastructure, zero RBAC config — uses the platform's own
+  persistence layer.
+- ✅ Cross-channel: conversations created via Teams / Playground / API share
+  the same ``conversation_id`` and thus the same checkpoint store.
+- ✅ Foundry monitoring/eval can replay turns natively.
+- ⚠️ Lifecycle is bounded by the session (max 30 days, 15 min idle resets the
+  compute but state persists). No "lifetime" persistence.
+- ⚠️ No cross-conversation querying or BU-wide search — the only way to
+  retrieve a conversation is by its ``conversation_id``.
 
 Run locally
 -----------
 ::
 
-    python main_hosted.py
-    # then in another terminal — single-turn:
-    curl -X POST http://localhost:8088/responses \\
-      -H "Content-Type: application/json" \\
-      -d '{"input": "\u00bfCu\u00e1ntos agentes hay en mi organizaci\u00f3n?"}'
-
-    # multiturn — pass the same conversation id on every call:
+    python main_hosted_native.py
+    # in another terminal — multiturn via the Responses ``conversation`` field:
     curl -X POST http://localhost:8088/responses \\
       -H "Content-Type: application/json" \\
       -d '{"input": "How many active agents in BU 1?", "conversation": "demo-001"}'
@@ -108,18 +106,13 @@ from agent_framework import (
 from agent_framework.foundry import FoundryChatClient
 from agent_framework.orchestrations import SequentialBuilder
 from agent_framework.observability import create_resource, enable_instrumentation
-from agent_framework_azure_cosmos import CosmosHistoryProvider
 from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.monitor.opentelemetry import configure_azure_monitor
 
 load_dotenv()
 
-# Telemetry bootstrap. When deployed to Foundry, the `microsoft-opentelemetry`
-# distro already configures Tracer/Meter/Logger providers from the injected
-# APPLICATIONINSIGHTS_CONNECTION_STRING. Calling `configure_azure_monitor`
-# again in that environment triggers harmless "Overriding of current
-# *Provider is not allowed" warnings. To keep the same code working locally
-# *and* hosted, only configure when Foundry's hosted bit is NOT set.
+# Telemetry bootstrap (same as the Cosmos variant — skip duplicate
+# configuration when Foundry's hosted distro already set up the providers).
 _IS_HOSTED = bool(os.getenv("AGENT_SERVER_HOSTED")) or bool(
     os.getenv("FOUNDRY_AGENT_NAME")
 )
@@ -133,45 +126,34 @@ enable_instrumentation(enable_sensitive_data=True)
 
 
 # ---------------------------------------------------------------------------
-# Configuration (fail-fast: every setting must come from the environment)
+# Configuration
 # ---------------------------------------------------------------------------
 
-# Foundry's hosting platform injects AZURE_AI_MODEL_DEPLOYMENT_NAME for the
-# model deployment. Local runs must also set it (no fallback — keep the
-# environment surface uniform so configuration drift is loud).
 FOUNDRY_MODEL = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
 MCP_SERVER_URL = os.environ["MCP_SERVER_URL"]
-# BU scope is a config concern for this experiment, not extracted from each
-# inbound HTTP request. To make it per-call later, parse it out of the request
-# in a custom Invocations handler or smuggle it via a custom header.
 BU_ID = int(os.environ["BU_ID"])
 
-# Cosmos DB NoSQL — backing store for conversation history. Authentication
-# goes through Entra (DefaultAzureCredential) + Cosmos DB Built-in Data
-# Contributor RBAC assigned to the Foundry project's managed identity.
-COSMOS_ENDPOINT = os.environ["AZURE_COSMOS_ENDPOINT"]
-COSMOS_DATABASE = os.environ["AZURE_COSMOS_DATABASE_NAME"]
-COSMOS_CONTAINER = os.environ["AZURE_COSMOS_CONTAINER_NAME"]
-
-# Sliding window for the conversation passed to the classifier.
-# 4 turns ≈ 8 messages (user + assistant pairs). Enough for typical
-# coreference cases without ballooning prompt tokens.
+# Sliding window passed to the classifier (turns = user/assistant pairs).
 HISTORY_TURNS = 4
-
-# Number of user/assistant turns the `recall_conversation` tool returns by
-# default when invoked by the query executor.
+# Default depth of the recall_conversation tool.
 RECALL_DEFAULT_TURNS = 10
 
-# ContextVar holding the session_id of the current request. Set by the
-# session-aware response handler before the workflow runs; read by
-# IntentStep, QueryExecutorStep and the recall_conversation tool.
-_SESSION_ID_CTX: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "wfm_session_id", default=None
+# Workflow shared-state key under which we accumulate the conversation
+# history. The MAF runner serialises this into every checkpoint; Foundry
+# restores it across turns.
+HISTORY_STATE_KEY = "history_messages"
+
+# Per-request snapshot of the prior conversation, set by QueryExecutorStep
+# right before running the executor agent. The recall_conversation tool
+# reads from here (the workflow context isn't reachable from inside a
+# function tool, so we bridge via a ContextVar instead).
+_HISTORY_SNAPSHOT_CTX: contextvars.ContextVar[list[dict[str, str]] | None] = (
+    contextvars.ContextVar("wfm_history_snapshot", default=None)
 )
 
 
 # ---------------------------------------------------------------------------
-# Schemas
+# Schemas (identical to the Cosmos variant)
 # ---------------------------------------------------------------------------
 
 class IntentResult(BaseModel):
@@ -179,9 +161,6 @@ class IntentResult(BaseModel):
     candidate_tables: list[str] = Field(default_factory=list)
     language_hint: str = "en"
     cache_action: str = "reuse"
-    # Standalone, conversation-independent restatement of the user's latest
-    # turn. Required so downstream steps never need to look at conversation
-    # history themselves.
     resolved_question: str = ""
 
 
@@ -194,8 +173,8 @@ class SqlPlan(BaseModel):
 
 
 class IntentBundle(BaseModel):
-    user_question: str          # resolved (standalone) — what downstream consumes
-    original_question: str      # raw last user turn — kept for audit and persistence
+    user_question: str
+    original_question: str
     bu_id: int
     intent_result: IntentResult
 
@@ -203,12 +182,12 @@ class IntentBundle(BaseModel):
 class SqlBundle(BaseModel):
     sql_plan: SqlPlan
     user_language: str
-    user_question: str          # same as IntentBundle.user_question (resolved)
-    original_question: str      # forwarded so the executor can persist the raw user turn
+    user_question: str
+    original_question: str
 
 
 # ---------------------------------------------------------------------------
-# Instructions
+# Instructions (identical to the Cosmos variant)
 # ---------------------------------------------------------------------------
 
 INTENT_INSTRUCTIONS_TPL = """\
@@ -334,58 +313,51 @@ def _render(template: str, **vars: object) -> str:
 
 
 # ---------------------------------------------------------------------------
-# `recall_conversation` function tool (wired ONLY to the query executor)
+# `recall_conversation` function tool
 # ---------------------------------------------------------------------------
 
-def make_recall_tool(provider: CosmosHistoryProvider):
-    """Build the ``recall_conversation`` function tool bound to *provider*.
+@tool(
+    name="recall_conversation",
+    description=(
+        "Retrieve the recent conversation history between you and the user. "
+        "Returns the last N user/assistant turns as plain text. "
+        "Use ONLY when the user is asking a meta-question about the conversation "
+        "itself (e.g. 'summarize what we discussed', 'resume what we talked about', "
+        "'what did I ask first', 'compare with the previous result'). "
+        "Do NOT use for normal data queries."
+    ),
+)
+async def recall_conversation(last_n_turns: int = RECALL_DEFAULT_TURNS) -> str:
+    """Return the last ``last_n_turns`` user turns plus their assistant replies.
 
-    The tool reads the current session_id from a module-level ContextVar
-    (set by the session-aware response handler before the workflow runs),
-    fetches the messages stored in Cosmos for that session, and returns a
-    compact text rendering of the last ``last_n_turns`` user/assistant
-    exchanges. The query executor agent decides when to call it based on
-    its system instructions.
+    Reads from the per-request snapshot ContextVar populated by
+    ``QueryExecutorStep`` immediately before invoking the executor agent.
+    The snapshot is the prior history (i.e. excluding the current turn),
+    matching the semantics of the Cosmos variant.
     """
+    snapshot = _HISTORY_SNAPSHOT_CTX.get()
+    if not snapshot:
+        return "No prior conversation available."
 
-    @tool(
-        name="recall_conversation",
-        description=(
-            "Retrieve the recent conversation history between you and the user. "
-            "Returns the last N user/assistant turns as plain text. "
-            "Use ONLY when the user is asking a meta-question about the conversation "
-            "itself (e.g. 'summarize what we discussed', 'resume what we talked about', "
-            "'what did I ask first', 'compare with the previous result'). "
-            "Do NOT use for normal data queries."
-        ),
-    )
-    async def recall_conversation(last_n_turns: int = RECALL_DEFAULT_TURNS) -> str:
-        sid = _SESSION_ID_CTX.get()
-        if not sid:
-            return "No active conversation session."
-        messages = await provider.get_messages(sid)
-        if not messages:
-            return "Conversation is empty."
-        kept: list[Message] = []
-        user_count = 0
-        for m in reversed(messages):
-            kept.append(m)
-            if getattr(m, "role", None) == "user":
-                user_count += 1
-                if user_count >= last_n_turns:
-                    break
-        kept.reverse()
-        lines: list[str] = []
-        for m in kept:
-            role = getattr(m, "role", "?") or "?"
-            text = (m.text or "").strip().replace("\n", " ")
-            if len(text) > 800:
-                text = text[:800] + "…"
-            if text:
-                lines.append(f"{role}: {text}")
-        return "\n".join(lines) if lines else "Conversation is empty."
+    kept: list[dict[str, str]] = []
+    user_count = 0
+    for entry in reversed(snapshot):
+        kept.append(entry)
+        if entry.get("role") == "user":
+            user_count += 1
+            if user_count >= last_n_turns:
+                break
+    kept.reverse()
 
-    return recall_conversation
+    lines: list[str] = []
+    for entry in kept:
+        role = entry.get("role", "?") or "?"
+        text = (entry.get("text") or "").strip().replace("\n", " ")
+        if len(text) > 800:
+            text = text[:800] + "…"
+        if text:
+            lines.append(f"{role}: {text}")
+    return "\n".join(lines) if lines else "Prior conversation is empty."
 
 
 # ---------------------------------------------------------------------------
@@ -420,13 +392,23 @@ def _build_messages(system_text: str, user_text: str) -> list[Message]:
     ]
 
 
-def _windowed_history(history: list[Message], turns: int) -> list[Message]:
-    """Return the last `turns` user/assistant pairs of the history.
+def _entries_to_messages(entries: list[dict[str, str]]) -> list[Message]:
+    """Rehydrate the lightweight checkpoint format into ``Message`` objects.
 
-    A "turn" here is one user message plus its corresponding assistant
-    reply. We keep the very last user message even if turns=0 so the
-    classifier always has at least the current question.
+    Workflow shared state must be JSON-serialisable for the runner to
+    checkpoint it, so we persist plain ``{"role", "text"}`` dicts rather
+    than full ``Message`` instances.
     """
+    out: list[Message] = []
+    for entry in entries:
+        role = entry.get("role")
+        text = entry.get("text") or ""
+        if role and text:
+            out.append(Message(role=role, contents=[text]))
+    return out
+
+
+def _windowed_history(history: list[Message], turns: int) -> list[Message]:
     if turns <= 0 or not history:
         for i in range(len(history) - 1, -1, -1):
             if history[i].role == "user":
@@ -450,26 +432,24 @@ def _windowed_history(history: list[Message], turns: int) -> list[Message]:
 # ---------------------------------------------------------------------------
 
 class IntentStep(Executor):
-    """Intent classifier with Cosmos-backed history hydration.
+    """Intent classifier with checkpoint-backed history hydration.
 
     The hosting layer feeds this executor only the NEW user turn from the
-    HTTP request (workflow agents do not get prior messages prepended).
-    We hydrate prior turns from Cosmos using the session_id stashed in the
-    ContextVar by the response handler, then window the resulting history
-    and feed it to the classifier so coreference resolves correctly.
+    HTTP request. We hydrate prior turns from the workflow's shared state
+    (which Foundry restores from the latest checkpoint), then window the
+    resulting history and feed it to the classifier so coreference
+    resolves correctly.
     """
 
     def __init__(
         self,
         agent: Agent,
         bu_id: int,
-        history_provider: CosmosHistoryProvider,
         id: str = "intent_step",
     ) -> None:
         super().__init__(id=id)
         self._agent = agent
         self._bu_id = bu_id
-        self._provider = history_provider
 
     @handler
     async def run(
@@ -482,20 +462,17 @@ class IntentStep(Executor):
             "",
         )
 
-        sid = _SESSION_ID_CTX.get()
-        prior: list[Message] = []
-        if sid:
-            try:
-                prior = list(await self._provider.get_messages(sid))
-            except Exception as exc:  # noqa: BLE001 — never break a turn on history load
-                print(f"  [warn] failed to load history from Cosmos: {exc}")
-                prior = []
+        # Prior history is whatever the last checkpoint left in shared state.
+        # Empty list on the very first turn of a conversation.
+        prior_entries: list[dict[str, str]] = list(
+            ctx.get_state(HISTORY_STATE_KEY, []) or []
+        )
+        prior_messages = _entries_to_messages(prior_entries)
 
-        # Build the full working history: prior turns from Cosmos + the new
-        # user turn from this request. Avoid double-counting if the new
-        # user message somehow already exists in Cosmos (it shouldn't, but
-        # be defensive).
-        history: list[Message] = list(prior)
+        history: list[Message] = list(prior_messages)
+        # Defensive guard against double-appending the new user turn if it
+        # were somehow already in state (it shouldn't be — QueryExecutorStep
+        # is the only writer).
         if not (
             history
             and history[-1].role == "user"
@@ -560,23 +537,21 @@ class SqlBuilderStep(Executor):
 
 
 class QueryExecutorStep(Executor):
-    """Final step: produce the answer and persist the turn to Cosmos.
+    """Final step: produce the answer and append the turn to shared state.
 
-    Persistence happens HERE (not in the response handler wrapper) so the
-    save is atomic with the workflow's successful output and naturally
-    skipped when an earlier step raises. The (raw user, assistant) pair
-    is stored under the active session_id.
+    Persistence happens HERE so the append is atomic with the workflow's
+    successful output and naturally skipped when an earlier step raises.
+    The MAF runner commits the updated state at the superstep boundary;
+    Foundry's host then writes the checkpoint.
     """
 
     def __init__(
         self,
         agent: Agent,
-        history_provider: CosmosHistoryProvider,
         id: str = "query_executor_step",
     ) -> None:
         super().__init__(id=id)
         self._agent = agent
-        self._provider = history_provider
 
     @handler
     async def run(
@@ -584,6 +559,14 @@ class QueryExecutorStep(Executor):
         bundle: SqlBundle,
         ctx: WorkflowContext[Never, AgentResponse],
     ) -> None:
+        # Snapshot of the PRIOR history (without the current turn) so the
+        # recall_conversation tool — called from inside self._agent.run()
+        # below — can serve meta-questions.
+        prior_entries: list[dict[str, str]] = list(
+            ctx.get_state(HISTORY_STATE_KEY, []) or []
+        )
+        _HISTORY_SNAPSHOT_CTX.set(prior_entries)
+
         rendered = _render(
             QUERY_EXECUTOR_INSTRUCTIONS_TPL,
             sqlPlan=json.dumps(bundle.sql_plan.model_dump()),
@@ -592,23 +575,17 @@ class QueryExecutorStep(Executor):
         messages = _build_messages(rendered, bundle.user_question)
         response = await self._agent.run(messages)
 
-        # Persist (raw user turn, assistant reply) under the active session.
-        # Only when the caller supplied a conversation id — single-shot
-        # requests intentionally leave no trace.
-        sid = _SESSION_ID_CTX.get()
-        if sid and bundle.original_question:
-            user_msg = Message(role="user", contents=[bundle.original_question])
-            assistant_msgs: list[Message] = []
+        # Append (raw user turn, assistant reply) to shared state. The runner
+        # commits this at the superstep boundary; Foundry writes the
+        # checkpoint at the end of the workflow run.
+        if bundle.original_question:
+            updated = list(prior_entries)
+            updated.append({"role": "user", "text": bundle.original_question})
             for m in response.messages:
                 text = (m.text or "").strip()
                 if text:
-                    assistant_msgs.append(Message(role="assistant", contents=[text]))
-            try:
-                await self._provider.save_messages(
-                    sid, [user_msg, *assistant_msgs]
-                )
-            except Exception as exc:  # noqa: BLE001 — never break a turn on persistence
-                print(f"  [warn] failed to persist turn to Cosmos: {exc}")
+                    updated.append({"role": "assistant", "text": text})
+            ctx.set_state(HISTORY_STATE_KEY, updated)
 
         await ctx.yield_output(AgentResponse(messages=response.messages))
 
@@ -627,10 +604,6 @@ async def main() -> None:
             credential=credential,
         )
 
-        # Local MCP — entered eagerly so the connection is ready before the
-        # first HTTP request. ``WorkflowAgent`` does not propagate
-        # ``__aenter__`` to inner agents, so the host's lazy entry would never
-        # reach the MCP tools.
         mcp_list = await mcp_stack.enter_async_context(
             MCPStreamableHTTPTool(
                 name="wfm-data",
@@ -656,26 +629,6 @@ async def main() -> None:
             )
         )
 
-        # Persistent conversation history backed by Cosmos DB NoSQL.
-        # Owned by the orchestrator; the agents themselves are NOT wired
-        # to it as context_providers. Authentication via Entra
-        # (DefaultAzureCredential) + Cosmos DB Built-in Data Contributor
-        # RBAC on the Foundry project's managed identity.
-        history_provider = CosmosHistoryProvider(
-            endpoint=COSMOS_ENDPOINT,
-            database_name=COSMOS_DATABASE,
-            container_name=COSMOS_CONTAINER,
-            credential=credential,
-            load_messages=False,   # IntentStep loads explicitly
-            store_inputs=False,    # QueryExecutorStep persists via save_messages
-            store_outputs=False,   # QueryExecutorStep persists via save_messages
-        )
-
-        # Function tool for on-demand conversation recall. Wired ONLY to
-        # the executor (intent agent already sees windowed history; sql
-        # builder operates on a standalone resolved question).
-        recall_tool = make_recall_tool(history_provider)
-
         intent_agent = Agent(
             client=client,
             name="wfm-intent-classifier",
@@ -689,14 +642,14 @@ async def main() -> None:
         query_executor_agent = Agent(
             client=client,
             name="wfm-query-executor",
-            tools=[mcp_exec, recall_tool],
+            tools=[mcp_exec, recall_conversation],
         )
 
         workflow = SequentialBuilder(
             participants=[
-                IntentStep(intent_agent, bu_id=BU_ID, history_provider=history_provider),
+                IntentStep(intent_agent, bu_id=BU_ID),
                 SqlBuilderStep(sql_builder_agent),
-                QueryExecutorStep(query_executor_agent, history_provider=history_provider),
+                QueryExecutorStep(query_executor_agent),
             ]
         ).build()
 
@@ -706,31 +659,16 @@ async def main() -> None:
             "scoped SQL query, executes it, and answers in the user's language.",
         )
 
+        # No custom response handler needed: Foundry's
+        # _handle_inner_workflow already keys checkpoints by
+        # context.conversation_id (or request.previous_response_id) and
+        # restores the shared State across turns automatically.
         server = ResponsesHostServer(workflow_agent)
-
-        # Wrap the framework's default response handler with one that
-        # extracts the conversation id from the request context and sets
-        # our ContextVar. Source of truth (in order):
-        #   1. ``context.conversation_id``    — Responses API ``conversation`` field.
-        #   2. ``request.previous_response_id`` — chained calls without an explicit
-        #      conversation id; uses the prior response id as the session key.
-        # When neither is present the request runs single-turn (no
-        # hydration, no persistence) — sid stays ``None``.
-        framework_handler = server._handle_response  # type: ignore[attr-defined]
-
-        @server.response_handler
-        async def session_aware_handler(request, context, cancellation_signal):
-            sid = context.conversation_id or request.previous_response_id
-            if sid:
-                _SESSION_ID_CTX.set(sid)
-            iterable = await framework_handler(request, context, cancellation_signal)
-            async for event in iterable:
-                yield event
 
         print(
             "Hosted agent ready on http://localhost:8088/responses "
             f"(bu_id={BU_ID}, model={FOUNDRY_MODEL}, "
-            f"cosmos={COSMOS_DATABASE}/{COSMOS_CONTAINER}). Ctrl-C to stop."
+            "persistence=native checkpoints). Ctrl-C to stop."
         )
         await server.run_async()
 
