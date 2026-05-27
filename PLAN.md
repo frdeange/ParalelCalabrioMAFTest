@@ -262,7 +262,8 @@ ParalelCalabrioMAFTest/
 │       ├── ADR-0002-schema-extended-properties.md
 │       ├── ADR-0003-bu-resolution-at-apim.md
 │       ├── ADR-0004-mcp-namespacing-fastmcp.md
-│       └── ADR-0005-hmac-apim-backend.md
+│       ├── ADR-0005-hmac-apim-backend.md
+│       └── ADR-0006-cosmos-service-identity-limitation.md
 ├── tests-e2e/                        # Playwright cross-component
 │   ├── playwright.config.ts
 │   ├── tests/
@@ -270,8 +271,6 @@ ParalelCalabrioMAFTest/
 │   │   ├── auth-flow.spec.ts
 │   │   └── bu-isolation.spec.ts
 │   └── package.json
-└── OLD/                              # archived, do not edit
-    └── ...                            # main_local.py, foundry_hosted/, etc.
 ```
 
 ---
@@ -618,8 +617,8 @@ GitFlow-lite gives us:
 ## 13. Project phases
 
 ### Phase 0 — Scaffold (right now)
-- [x] Cleanup OLD/
 - [x] Remove CalabrioMAFVersion
+- [x] Remove OLD/ archive (lesson preserved in ADR-0006)
 - [x] Create PLAN.md
 - [x] Create directory skeleton `apps/`, `infra/`, `docs/`, `tests-e2e/`
 - [x] Per-component README stubs
@@ -746,12 +745,21 @@ AZURE_CONTAINER_REGISTRY_ENDPOINT=calabriomafpocacr.azurecr.io
 
 ## 15. References and legacy artifacts
 
-### `OLD/` (in this repo, archived)
-- [OLD/main_local.py](OLD/main_local.py ) — single-shot local CLI (predecessor)
-- [OLD/foundry_hosted/](OLD/foundry_hosted/ ) — Foundry hosted agent variant (discarded)
-- [OLD/update_agents.py](OLD/update_agents.py ) — publish/update Foundry Prompt Agents (discarded)
-- [OLD/scripts/](OLD/scripts/ ) — deploy utilities (reference, do not port as-is)
-- [OLD/README-v1-archived.md](OLD/README-v1-archived.md ) — original README incl. Cosmos×ServiceIdentity post-mortem
+### v1 codebase (removed from repo, archived by the maintainer)
+
+The previous iteration lived under `OLD/` and contained:
+
+- `main_local.py` — single-shot local CLI (predecessor).
+- `main_local_multiturn.py` — multi-turn local CLI; its design is the
+  starting point for `apps/backend` (kept at the repo root as
+  `main_local_multiturn.py` until Phase 1 lands).
+- `foundry_hosted/` — Foundry Hosted Agent variant. Discarded as the runtime
+  host for the backend (see ADR-0006).
+- `update_agents.py` — publish/update Foundry Prompt Agents. Discarded.
+- `scripts/` — deploy utilities. Reference only, do not port as-is.
+- `README-v1-archived.md` — long-form v1 README. The key engineering lesson
+  (Cosmos DB data-plane RBAC vs `ServiceIdentity`) is preserved in
+  [ADR-0006](docs/adr/ADR-0006-cosmos-service-identity-limitation.md).
 
 ### `CalabrioMAFVersion/` (removed from repo, archived elsewhere)
 Contained:

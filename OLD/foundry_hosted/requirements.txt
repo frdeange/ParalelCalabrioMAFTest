@@ -1,3 +1,0 @@
-agent-framework==1.6.0
-agent-framework-foundry-hosting==1.0.0a260521
-azure-monitor-opentelemetry==1.8.8
