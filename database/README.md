@@ -1,29 +1,29 @@
 # Database — Calabrio WFM schema
 
-> Scripts T-SQL para Azure SQL Database. Schema + views + seed + extended properties.
+> T-SQL scripts for Azure SQL Database. Schema + views + seed + extended properties.
 
-## Archivos
+## Files
 
-| Archivo | Propósito |
-|---------|-----------|
-| `01-schemas-and-tables.sql` | Crea schemas `wfm`, `absence`, `overtime`, `scheduling`, `_metadata` + tablas core |
-| `02-views.sql` | Views derivadas |
-| `03-seed-data.sql` | Datos demo: 1 BU `CWFM-DEMO`, 3 sites, 50 agents |
-| `04-grant-readonly.sql` | Rol custom `wfm_reader` y grants |
-| `05-metadata-schema.sql` | **(Phase 2)** Tablas `_metadata.agent_allowlist` y `_metadata.tool_audit` |
-| `06-extended-properties.sql` | **(Phase 2)** `sp_addextendedproperty` MS_Description para tablas/columnas visibles |
+| File | Purpose |
+|------|---------|
+| `01-schemas-and-tables.sql` | Creates schemas `wfm`, `absence`, `overtime`, `scheduling`, `_metadata` + core tables |
+| `02-views.sql` | Derived views |
+| `03-seed-data.sql` | Demo data: 1 BU `CWFM-DEMO`, 3 sites, 50 agents |
+| `04-grant-readonly.sql` | Custom role `wfm_reader` and grants |
+| `05-metadata-schema.sql` | **(Phase 2)** Tables `_metadata.agent_allowlist` and `_metadata.tool_audit` |
+| `06-extended-properties.sql` | **(Phase 2)** `sp_addextendedproperty` MS_Description for visible tables/columns |
 
-## Orden de ejecución
+## Execution order
 
 ```bash
-# en orden numérico
+# in numeric order
 sqlcmd -S <server>.database.windows.net -d calabriowfm -G -i database/01-schemas-and-tables.sql
 sqlcmd -S <server>.database.windows.net -d calabriowfm -G -i database/02-views.sql
 sqlcmd -S <server>.database.windows.net -d calabriowfm -G -i database/03-seed-data.sql
 sqlcmd -S <server>.database.windows.net -d calabriowfm -G -i database/04-grant-readonly.sql
-# 05 y 06 cuando los creemos en Phase 2
+# 05 and 06 once they are created in Phase 2
 ```
 
-## Estrategia de schema
+## Schema strategy
 
-Ver [PLAN.md §9](../PLAN.md#9-estrategia-de-schema-db--llm).
+See [PLAN.md §9](../PLAN.md#9-schema-strategy-db--llm).

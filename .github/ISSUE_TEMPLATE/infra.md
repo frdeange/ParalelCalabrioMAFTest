@@ -1,41 +1,41 @@
 ---
 name: "⚙️ Infrastructure"
-about: "Cambios en Bicep, azd, APIM, Container Apps, networking"
+about: "Changes to Bicep, azd, APIM, Container Apps, networking"
 title: "[infra] "
 labels: ["⚙️ infra", "🏛️ infra"]
 assignees: []
 ---
 
-## ⚙️ Descripción
+## ⚙️ Description
 
-<!-- ¿Qué recurso/configuración cambia? -->
+<!-- Which resource/configuration changes? -->
 
-## 🎯 Motivación
+## 🎯 Motivation
 
-<!-- Problema que resuelve. -->
+<!-- Problem it solves. -->
 
-## 📋 Criterios de aceptación
+## 📋 Acceptance criteria
 
-- [ ] Bicep compila sin warnings
+- [ ] Bicep compiles with no warnings
 - [ ] `az deployment ... validate` OK
-- [ ] `what-if` revisado
-- [ ] Coste estimado documentado si es nuevo recurso
-- [ ] RBAC mínimos aplicados (no Owner / Contributor a granel)
-- [ ] Secrets en KV, nunca en Bicep parameters
-- [ ] Workflow `infra-validate` verde
+- [ ] `what-if` reviewed
+- [ ] Estimated cost documented if it is a new resource
+- [ ] Minimum RBAC applied (no Owner / Contributor blanket)
+- [ ] Secrets in KV, never in Bicep parameters
+- [ ] `infra-validate` workflow green
 
-## 🗂️ Archivos a tocar
+## 🗂️ Files to touch
 
-<!-- ej. infra/main.bicep, infra/modules/apim.bicep -->
+<!-- e.g. infra/main.bicep, infra/modules/apim.bicep -->
 
-## 🔐 Consideraciones de seguridad
+## 🔐 Security considerations
 
 <!-- Public endpoints, managed identity, RBAC, KV refs -->
 
-## 💰 Impacto en costes
+## 💰 Cost impact
 
-<!-- Estimación / link a calculadora de Azure -->
+<!-- Estimate / link to the Azure calculator -->
 
-## 📐 Fase
+## 📐 Phase
 
-<!-- phase-5-infra usualmente -->
+<!-- usually phase-5-infra -->

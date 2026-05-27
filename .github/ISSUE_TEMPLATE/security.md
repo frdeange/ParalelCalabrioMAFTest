@@ -1,36 +1,36 @@
 ---
 name: "🔒 Security"
-about: "Vulnerabilidad, hardening, auditoría"
+about: "Vulnerability, hardening, audit"
 title: "[security] "
 labels: ["🔒 security", "🔴 critical"]
 assignees: []
 ---
 
-> ⚠️ **Si es una vulnerabilidad explotable activa, NO abrir issue público.**
-> Reportar privadamente al owner del repo.
+> ⚠️ **If this is an actively exploitable vulnerability, DO NOT open a public issue.**
+> Report it privately to the repo owner.
 
-## 🔒 Descripción
+## 🔒 Description
 
-<!-- Naturaleza del issue de seguridad. -->
+<!-- Nature of the security issue. -->
 
-## 🎯 Componente / vector
+## 🎯 Component / vector
 
 - [ ] Frontend / MSAL flow
 - [ ] APIM policies
 - [ ] Backend auth (HMAC, JWT verify)
 - [ ] MCP (SQL injection, query validator)
 - [ ] Infra (RBAC, network, KV)
-- [ ] Dependencias (CVE)
-- [ ] Otro: ___
+- [ ] Dependencies (CVE)
+- [ ] Other: ___
 
-## ✅ Mitigación propuesta
+## ✅ Proposed mitigation
 
 <!-- Patch, refactor, policy change... -->
 
-## 🧪 Verificación
+## 🧪 Verification
 
-<!-- Cómo probar que el fix funciona y no regresa. -->
+<!-- How to prove the fix works and does not regress. -->
 
-## 📚 Referencias
+## 📚 References
 
-<!-- CVE IDs, OWASP categories, links a docs. -->
+<!-- CVE IDs, OWASP categories, links to docs. -->

@@ -1,33 +1,33 @@
 ---
 name: "♻️ Refactor"
-about: "Cambio interno sin alterar comportamiento"
+about: "Internal change without altering behavior"
 title: "[refactor] "
 labels: ["♻️ refactor"]
 assignees: []
 ---
 
-## ♻️ ¿Qué queremos refactorizar?
+## ♻️ What do we want to refactor?
 
-<!-- Módulo, clase, función. -->
+<!-- Module, class, function. -->
 
-## 🎯 Motivación
+## 🎯 Motivation
 
-<!-- Smell, duplicación, complejidad, performance, legibilidad. -->
+<!-- Smell, duplication, complexity, performance, readability. -->
 
-## ✅ Garantías de no-regresión
+## ✅ No-regression guarantees
 
-- [ ] Tests existentes pasan sin modificación
-- [ ] Si hay cambios de tests, son aditivos (no relajan asserts)
-- [ ] No cambia API pública del módulo (o se documenta migración)
+- [ ] Existing tests pass unchanged
+- [ ] If tests are changed, the changes are additive (do not relax asserts)
+- [ ] The module's public API is unchanged (or a migration is documented)
 
-## 🗂️ Archivos a tocar
+## 🗂️ Files to touch
 
-<!-- ej. apps/backend/app/workflow.py -->
+<!-- e.g. apps/backend/app/workflow.py -->
 
-## 📐 Antes / Después (boceto)
+## 📐 Before / After (sketch)
 
 ```python
-# antes
+# before
 
-# después
+# after
 ```

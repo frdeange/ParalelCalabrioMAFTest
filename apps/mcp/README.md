@@ -1,14 +1,14 @@
 # MCP — apps/mcp
 
-> FastMCP server con tools de schema introspection y query execution. Container App #3.
+> FastMCP server with schema introspection and query execution tools. Container App #3.
 
-📖 Ver [PLAN.md §6.3](../../PLAN.md#63-mcp-appsmcp) y [PLAN.md §8](../../PLAN.md#8-diseño-del-mcp).
+📖 See [PLAN.md §6.3](../../PLAN.md#63-mcp-appsmcp) and [PLAN.md §8](../../PLAN.md#8-mcp-design).
 
-## Estado
+## Status
 
-**Phase 0** — esqueleto vacío. Implementación en **Phase 2**.
+**Phase 0** — empty skeleton. Implementation in **Phase 2**.
 
-## Tools día 1 (5)
+## Day-1 tools (5)
 
 | Namespace | Tool |
 |-----------|------|
@@ -16,9 +16,9 @@
 | `schema` | `search_tables` |
 | `schema` | `describe_table` |
 | `schema` | `get_distinct_values` |
-| `query`  | `execute` (read-only, `bu_id` forzado) |
+| `query`  | `execute` (read-only, `bu_id` enforced) |
 
-## Estructura prevista
+## Planned structure
 
 ```
 app/
@@ -30,7 +30,7 @@ app/
 ├── identity.py          # verify HMAC + x-bu-id
 └── settings.py
 scripts/
-├── bootstrap_metadata.py   # crea _metadata schema
+├── bootstrap_metadata.py   # create _metadata schema
 └── seed_extended_properties.py
 tests/
 Dockerfile
@@ -38,7 +38,7 @@ pyproject.toml
 .env.example
 ```
 
-## Run (cuando exista)
+## Run (once it exists)
 
 ```bash
 cd apps/mcp
@@ -47,6 +47,6 @@ cp .env.example .env
 uvicorn app.server:app --port 8001
 ```
 
-## Variables de entorno
+## Environment variables
 
-Ver [PLAN.md §14 MCP](../../PLAN.md#14-inventario-de-variables-de-entorno).
+See [PLAN.md §14 MCP](../../PLAN.md#14-environment-variables-inventory).

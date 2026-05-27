@@ -1,63 +1,63 @@
 # PLAN — ParalelCalabrioMAF v2
 
-> **Single source of truth** del proyecto. Toda decisión arquitectónica vive aquí.
-> Si algo de este documento entra en conflicto con código, gana este documento — y abrimos un issue.
+> **Single source of truth** for the project. Every architectural decision lives here.
+> If anything in this document conflicts with code, this document wins — and we open an issue.
 
-**Fecha de creación**: 2026-05-27
-**Estado**: Phase 0 — Scaffold
-**Branch base de trabajo**: `develop` (PRs → `main`)
+**Created**: 2026-05-27
+**Status**: Phase 0 — Scaffold
+**Working base branch**: `develop` (PRs → `main`)
 
 ---
 
-## Tabla de contenidos
+## Table of contents
 
-1. [Visión y alcance](#1-visión-y-alcance)
-2. [Arquitectura global](#2-arquitectura-global)
-3. [Decisiones arquitectónicas locked](#3-decisiones-arquitectónicas-locked)
-4. [Stack tecnológico](#4-stack-tecnológico)
-5. [Estructura del monorepo](#5-estructura-del-monorepo)
-6. [Componentes en detalle](#6-componentes-en-detalle)
-7. [Flujo de autenticación y BU resolution](#7-flujo-de-autenticación-y-bu-resolution)
-8. [Diseño del MCP](#8-diseño-del-mcp)
-9. [Estrategia de schema (DB ↔ LLM)](#9-estrategia-de-schema-db--llm)
-10. [Infraestructura Azure](#10-infraestructura-azure)
+1. [Vision and scope](#1-vision-and-scope)
+2. [Global architecture](#2-global-architecture)
+3. [Locked architectural decisions](#3-locked-architectural-decisions)
+4. [Tech stack](#4-tech-stack)
+5. [Monorepo structure](#5-monorepo-structure)
+6. [Component detail](#6-component-detail)
+7. [Authentication flow and BU resolution](#7-authentication-flow-and-bu-resolution)
+8. [MCP design](#8-mcp-design)
+9. [Schema strategy (DB ↔ LLM)](#9-schema-strategy-db--llm)
+10. [Azure infrastructure](#10-azure-infrastructure)
 11. [Testing](#11-testing)
-12. [DevOps y branching](#12-devops-y-branching)
-13. [Fases del proyecto](#13-fases-del-proyecto)
-14. [Inventario de variables de entorno](#14-inventario-de-variables-de-entorno)
-15. [Referencias y artefactos legacy](#15-referencias-y-artefactos-legacy)
+12. [DevOps and branching](#12-devops-and-branching)
+13. [Project phases](#13-project-phases)
+14. [Environment variables inventory](#14-environment-variables-inventory)
+15. [References and legacy artifacts](#15-references-and-legacy-artifacts)
 
 ---
 
-## 1. Visión y alcance
+## 1. Vision and scope
 
-### Objetivo del producto
+### Product objective
 
-Asistente conversacional para que usuarios de Calabrio WFM hagan preguntas en lenguaje natural sobre sus datos (turnos, absentismo, agentes, sites, etc.), y reciban respuestas con datos reales de su Business Unit (BU) — todo sin exponer ni SQL al usuario ni datos de otras BUs.
+Conversational assistant that lets Calabrio WFM users ask natural-language questions about their data (shifts, absences, agents, sites, etc.) and receive answers backed by real data from their Business Unit (BU) — without exposing SQL to the user and without leaking data from other BUs.
 
-### Alcance v2 (este proyecto)
+### v2 scope (this project)
 
-- **3 Azure Container Apps**: backend (orquestación MAF), frontend (Next.js + CopilotKit), MCP (FastMCP).
-- **Frontend con login Entra ID** + chat en tiempo real (AG-UI).
-- **APIM por delante** de backend y MCP con auth, rate limiting, BU resolution, HMAC sign.
-- **1 BU activa** (`CWFM-DEMO`, BU_ID=1), arquitectura preparada para N BUs.
-- **Multi-turno persistente** vía Cosmos DB.
-- **Observabilidad** end-to-end con Azure Monitor + App Insights.
+- **3 Azure Container Apps**: backend (MAF orchestration), frontend (Next.js + CopilotKit), MCP (FastMCP).
+- **Frontend with Entra ID login** + real-time chat (AG-UI).
+- **APIM in front of** backend and MCP with auth, rate limiting, BU resolution, HMAC signing.
+- **1 active BU** (`CWFM-DEMO`, BU_ID=1); architecture ready for N BUs.
+- **Persistent multi-turn** via Cosmos DB.
+- **End-to-end observability** with Azure Monitor + App Insights.
 
-### Fuera de alcance v2
+### Out of scope for v2
 
-- Acciones de escritura sobre WFM (solo read-only).
-- Multi-tenant físico (un único Azure SQL Database, segregación lógica por `bu_id`).
-- Auto-aprovisionamiento de nuevos clientes.
-- Integraciones externas (Teams, Slack, etc.) — futuro.
+- Write actions against WFM (read-only only).
+- Physical multi-tenancy (single Azure SQL Database, logical segregation by `bu_id`).
+- Self-service provisioning of new customers.
+- External integrations (Teams, Slack, etc.) — future.
 
 ---
 
-## 2. Arquitectura global
+## 2. Global architecture
 
 ```mermaid
 graph LR
-    User([👤 Usuario Calabrio]) -->|1. Login MSAL| AAD[(Entra ID)]
+    User([👤 Calabrio user]) -->|1. MSAL login| AAD[(Entra ID)]
     User -->|2. Chat HTTPS+JWT| FE[🎨 Frontend<br/>Next.js + CopilotKit<br/>Container App]
     FE -->|3. SSE AG-UI<br/>JWT Bearer| APIM[🛡️ APIM<br/>chat-api-dev<br/>mcp-api-dev]
     APIM -->|4. JWT valid<br/>+ x-bu-id<br/>+ HMAC sign| BE[🧠 Backend<br/>MAF Workflow<br/>FastAPI+ag-ui<br/>Container App]
@@ -72,42 +72,42 @@ graph LR
     FE -.->|telemetry| AI
 ```
 
-### Principios de diseño
+### Design principles
 
-1. **Cada servicio tiene una sola responsabilidad** (frontend = UI/auth, backend = orquestación LLM, MCP = acceso DB).
-2. **APIM siempre delante** — nada se expone directamente.
-3. **HMAC entre APIM y backend/MCP** — para que backend y MCP confíen únicamente en peticiones firmadas por APIM (defensa en profundidad si alguien expusiera accidentalmente el endpoint del CA).
-4. **BU se resuelve en APIM**, no en backend. Backend confía en el header `x-bu-id`.
-5. **MCP es stateless** — no guarda estado de conversación.
-6. **Multi-turno vive en backend** vía `CosmosHistoryProvider` con `session_id` por usuario+BU+conv.
-
----
-
-## 3. Decisiones arquitectónicas locked
-
-| #  | Decisión | Justificación |
-|----|----------|---------------|
-| D1 | Monorepo (apps/backend, apps/frontend, apps/mcp) | Refactor cruzado y revisión atómica; 1 PR puede tocar contrato BE↔MCP. |
-| D2 | 3 Container Apps independientes (no monolito) | Escalado independiente; FE puede crecer en concurrencia sin afectar al MCP. |
-| D3 | Frontend Next.js 15 + CopilotKit + Tailwind/shadcn/ui + MSAL (`@azure/msal-react`) | CopilotKit + MAF AG-UI = integración nativa; MSAL redirect flow para Entra ID. |
-| D4 | Backend FastAPI + `agent_framework.ag_ui` (1st party) | Endpoint AG-UI oficial vía `add_agent_framework_fastapi_endpoint`. |
-| D5 | MCP con FastMCP ≥3.3.1 + `mount(prefix=...)` para namespacing | Stateless Streamable HTTP; namespaces (`schema.*`, `query.*`, futuro `forecast.*`) sin colisiones. |
-| D6 | APIM con multi-API por entorno (`chat-api-dev`, `chat-api-prod`, `mcp-api-dev`, `mcp-api-prod`) | Aislamiento estricto dev/prod; policies versionadas en repo como fragments. |
-| D7 | Policy Fragments reutilizables (`auth-validation`, `bu-resolution`, `hmac-sign`, `rate-limit-per-user`) | DRY entre APIs; 1 sitio para cambiar lógica de auth/BU. |
-| D8 | BU resolution 4-layer en APIM: (1) JWT claim → (2) domain map (Named Value) → (3) `x-debug-bu` header POC → (4) `BU_ID_DEFAULT` fallback | Funciona desde día 1 sin claim configurado; soporta multi-BU sin código. |
-| D9 | Schema introspection: INFORMATION_SCHEMA + `sys.extended_properties` (MS_Description) — **sin aliases** | Single source of truth dentro de SQL; partner aprueba `sp_addextendedproperty`; LLM lee desde MCP en runtime. |
-| D10 | Intent simplificado: kill `candidate_tables` — Intent solo clasifica (DataQuery / Conversational / OutOfScope); SqlBuilder explora schema solo (vía MCP) | Reduce acoplamiento y tokens; cada step hace 1 cosa. |
+1. **Each service has a single responsibility** (frontend = UI/auth, backend = LLM orchestration, MCP = DB access).
+2. **APIM always in front** — nothing is exposed directly.
+3. **HMAC between APIM and backend/MCP** — backend and MCP trust only requests signed by APIM (defense in depth in case a Container App endpoint is accidentally exposed).
+4. **BU is resolved at APIM**, not in backend. Backend trusts the `x-bu-id` header.
+5. **MCP is stateless** — no conversation state.
+6. **Multi-turn lives in backend** via `CosmosHistoryProvider` with `session_id` per user+BU+conv.
 
 ---
 
-## 4. Stack tecnológico
+## 3. Locked architectural decisions
+
+| #  | Decision | Rationale |
+|----|----------|-----------|
+| D1 | Monorepo (apps/backend, apps/frontend, apps/mcp) | Cross-component refactor and atomic review; one PR can change BE↔MCP contract together. |
+| D2 | 3 independent Container Apps (not a monolith) | Independent scaling; FE can grow in concurrency without impacting MCP. |
+| D3 | Frontend: Next.js 15 + CopilotKit + Tailwind/shadcn/ui + MSAL (`@azure/msal-react`) | CopilotKit + MAF AG-UI = native integration; MSAL redirect flow for Entra ID. |
+| D4 | Backend: FastAPI + `agent_framework.ag_ui` (1st party) | Official AG-UI endpoint via `add_agent_framework_fastapi_endpoint`. |
+| D5 | MCP: FastMCP ≥3.3.1 + `mount(prefix=...)` for namespacing | Stateless Streamable HTTP; namespaces (`schema.*`, `query.*`, future `forecast.*`) with no collisions. |
+| D6 | APIM with multi-API per environment (`chat-api-dev`, `chat-api-prod`, `mcp-api-dev`, `mcp-api-prod`) | Strict dev/prod isolation; policies versioned in repo as fragments. |
+| D7 | Reusable Policy Fragments (`auth-validation`, `bu-resolution`, `hmac-sign`, `rate-limit-per-user`) | DRY across APIs; one place to change auth/BU logic. |
+| D8 | BU resolution 4-layer at APIM: (1) JWT claim → (2) domain map (Named Value) → (3) `x-debug-bu` POC header → (4) `BU_ID_DEFAULT` fallback | Works day 1 without claims configured; supports multi-BU with no code changes. |
+| D9 | Schema introspection: INFORMATION_SCHEMA + `sys.extended_properties` (MS_Description) — **no aliases** | Single source of truth inside SQL; partner approves `sp_addextendedproperty`; LLM reads from MCP at runtime. |
+| D10 | Simplified Intent: kill `candidate_tables` — Intent only classifies (DataQuery / Conversational / OutOfScope); SqlBuilder explores schema on its own (via MCP) | Reduces coupling and tokens; each step does one thing. |
+
+---
+
+## 4. Tech stack
 
 ### Backend (`apps/backend`)
 - Python 3.11
-- `agent-framework==1.6.0` (meta) — usa `agent_framework`, `agent_framework.ag_ui`, `agent_framework.foundry`, `agent_framework.azure`
+- `agent-framework==1.6.0` (meta) — uses `agent_framework`, `agent_framework.ag_ui`, `agent_framework.foundry`, `agent_framework.azure`
 - FastAPI + Uvicorn
 - `azure-cosmos`, `azure-identity`, `azure-monitor-opentelemetry`
-- `mcp` (cliente, vía `MCPStreamableHTTPTool` de MAF)
+- `mcp` (client, via MAF's `MCPStreamableHTTPTool`)
 - pytest, pytest-asyncio, httpx
 
 ### Frontend (`apps/frontend`)
@@ -122,32 +122,32 @@ graph LR
 ### MCP (`apps/mcp`)
 - Python 3.11
 - `fastmcp>=3.3.1`
-- `pyodbc` o `aioodbc` (driver SQL Server)
-- `sqlglot` (validación AST de SELECT-only)
-- `azure-identity` (DefaultAzureCredential para Entra-auth SQL)
-- `azure-keyvault-secrets` (si SQL auth con contraseña)
+- `pyodbc` or `aioodbc` (SQL Server driver)
+- `sqlglot` (AST validation for SELECT-only)
+- `azure-identity` (DefaultAzureCredential for Entra-auth SQL)
+- `azure-keyvault-secrets` (if SQL auth with password)
 - pytest, pytest-asyncio
 
 ### Infra (`infra/`)
-- Bicep (módulos: `containerapps.bicep`, `apim.bicep`, `cosmos.bicep`, `keyvault.bicep`, `acr.bicep`, `loganalytics.bicep`, `appinsights.bicep`, `sql.bicep`, `network.bicep`)
-- `azd` (Azure Developer CLI) para deploys
-- Container Apps Environment compartido
-- APIM developer SKU (Standard v2 si presupuesto)
+- Bicep (modules: `containerapps.bicep`, `apim.bicep`, `cosmos.bicep`, `keyvault.bicep`, `acr.bicep`, `loganalytics.bicep`, `appinsights.bicep`, `sql.bicep`, `network.bicep`)
+- `azd` (Azure Developer CLI) for deployments
+- Shared Container Apps Environment
+- APIM developer SKU (Standard v2 if budget allows)
 
 ### CI/CD (`.github/workflows/`)
 - GitHub Actions
-- Workflows separados por componente: `backend-ci.yml`, `frontend-ci.yml`, `mcp-ci.yml`, `infra-validate.yml`
-- Workflow E2E: `e2e-tests.yml` (sobre branch `develop` post-merge)
+- Per-component workflows: `backend-ci.yml`, `frontend-ci.yml`, `mcp-ci.yml`, `infra-validate.yml`
+- E2E workflow: `e2e-tests.yml` (on `develop` branch post-merge)
 
 ---
 
-## 5. Estructura del monorepo
+## 5. Monorepo structure
 
 ```
 ParalelCalabrioMAFTest/
-├── PLAN.md                          # ← este documento
-├── README.md                        # quickstart consolidado, links a docs/
-├── .env.example                     # vars de infra (azd)
+├── PLAN.md                          # ← this document
+├── README.md                        # consolidated quickstart, links to docs/
+├── .env.example                     # infra vars (azd)
 ├── .github/
 │   ├── ISSUE_TEMPLATE/
 │   │   ├── bug_report.md
@@ -212,7 +212,7 @@ ParalelCalabrioMAFTest/
 │       │   ├── identity.py          # verify HMAC + parse x-bu-id
 │       │   └── settings.py
 │       ├── scripts/
-│       │   ├── bootstrap_metadata.py  # crear _metadata schema + tablas
+│       │   ├── bootstrap_metadata.py  # create _metadata schema + tables
 │       │   └── seed_extended_properties.py
 │       ├── tests/
 │       ├── pyproject.toml
@@ -242,25 +242,25 @@ ParalelCalabrioMAFTest/
 │           ├── chat-api.xml
 │           └── mcp-api.xml
 ├── database/
-│   ├── 01-schemas-and-tables.sql    # heredado, validado
+│   ├── 01-schemas-and-tables.sql    # inherited, validated
 │   ├── 02-views.sql
 │   ├── 03-seed-data.sql              # 1 BU CWFM-DEMO / 3 sites / 50 agents
 │   ├── 04-grant-readonly.sql
-│   ├── 05-metadata-schema.sql        # NUEVO: tablas _metadata.*
-│   └── 06-extended-properties.sql    # NUEVO: sp_addextendedproperty
+│   ├── 05-metadata-schema.sql        # NEW: _metadata.* tables
+│   └── 06-extended-properties.sql    # NEW: sp_addextendedproperty
 ├── docs/
 │   ├── architecture.md               # diagrams + ADR index
 │   ├── devops-setup.md               # branch protection + onboarding
 │   ├── apim-policies.md
-│   ├── mcp-tool-catalog.md           # auto-generado
+│   ├── mcp-tool-catalog.md           # auto-generated
 │   ├── bu-resolution.md
 │   ├── security-model.md             # HMAC, JWT, threat model
 │   ├── deployment.md                 # azd up step-by-step
 │   ├── troubleshooting.md
 │   └── adr/
-│       ├── ADR-0001-arquitectura-general.md
+│       ├── ADR-0001-overall-architecture.md
 │       ├── ADR-0002-schema-extended-properties.md
-│       ├── ADR-0003-bu-resolution-en-apim.md
+│       ├── ADR-0003-bu-resolution-at-apim.md
 │       ├── ADR-0004-mcp-namespacing-fastmcp.md
 │       └── ADR-0005-hmac-apim-backend.md
 ├── tests-e2e/                        # Playwright cross-component
@@ -270,38 +270,38 @@ ParalelCalabrioMAFTest/
 │   │   ├── auth-flow.spec.ts
 │   │   └── bu-isolation.spec.ts
 │   └── package.json
-└── OLD/                              # archivado, no editar
+└── OLD/                              # archived, do not edit
     └── ...                            # main_local.py, foundry_hosted/, etc.
 ```
 
 ---
 
-## 6. Componentes en detalle
+## 6. Component detail
 
 ### 6.1 Backend (`apps/backend`)
 
-**Responsabilidades**:
-- Servir endpoint AG-UI (`/agui`) compatible con CopilotKit / cliente AG-UI.
-- Orquestar el workflow de 3 steps: `IntentStep` → `SqlBuilderStep` → `QueryExecutorStep`.
-- Mantener multi-turno persistente vía `CosmosHistoryProvider`.
-- Llamar al MCP (via APIM) para schema discovery + ejecución de queries.
-- Emitir telemetría.
+**Responsibilities**:
+- Serve the AG-UI endpoint (`/agui`) compatible with CopilotKit / AG-UI client.
+- Orchestrate the 3-step workflow: `IntentStep` → `SqlBuilderStep` → `QueryExecutorStep`.
+- Keep persistent multi-turn state via `CosmosHistoryProvider`.
+- Call MCP (via APIM) for schema discovery + query execution.
+- Emit telemetry.
 
-**No hace**:
-- Auth (lo hace APIM).
-- Resolver BU (lo hace APIM y pasa por header).
-- Conexión directa a SQL (lo hace MCP).
+**Does NOT**:
+- Handle auth (APIM does).
+- Resolve BU (APIM does, passed via header).
+- Connect directly to SQL (MCP does).
 
-**Endpoint principal**:
+**Main endpoint**:
 ```
 POST /agui  (SSE)
-Headers requeridos:
+Required headers:
   x-user-oid, x-user-email, x-user-name, x-bu-id
-  x-apim-signature (HMAC verificable)
+  x-apim-signature (HMAC verifiable)
 Body: AG-UI standard
 ```
 
-**Workflow shape** (heredado de [main_local_multiturn.py](main_local_multiturn.py )):
+**Workflow shape** (inherited from [main_local_multiturn.py](main_local_multiturn.py )):
 ```python
 WorkflowBuilder()
   .set_start_executor(IntentStep)
@@ -315,47 +315,47 @@ WorkflowBuilder()
 
 ### 6.2 Frontend (`apps/frontend`)
 
-**Responsabilidades**:
-- Login con MSAL (redirect flow, configurable a popup).
-- UI de chat con CopilotKit consumiendo el endpoint AG-UI del backend (via APIM).
-- Mostrar BU activa del usuario (header).
-- En modo POC, selector visual de BU (que setea header `x-debug-bu`).
+**Responsibilities**:
+- MSAL login (redirect flow, configurable to popup).
+- Chat UI via CopilotKit consuming the backend's AG-UI endpoint (via APIM).
+- Show user's active BU (header).
+- In POC mode, a visual BU selector (sets the `x-debug-bu` header).
 
-**No hace**:
-- Lógica de chat propia (es vista pura de CopilotKit).
-- Llamadas a SQL/MCP (todo va via backend).
+**Does NOT**:
+- Own chat logic (it's a pure CopilotKit view).
+- Call SQL/MCP (everything goes through backend).
 
-**Páginas mínimas**:
-- `/` — landing con botón "Sign in with Microsoft"
-- `/chat` — UI principal (post-login)
+**Minimum pages**:
+- `/` — landing with a "Sign in with Microsoft" button
+- `/chat` — main UI (post-login)
 - `/auth/callback` — MSAL redirect target
 
 ### 6.3 MCP (`apps/mcp`)
 
-**Responsabilidades**:
-- Exponer tools de schema introspection y query execution sobre Streamable HTTP.
-- Forzar `WHERE bu_id = @bu_id` en todas las queries.
-- Validar AST (read-only, no DDL/DML).
-- Verificar HMAC de APIM.
+**Responsibilities**:
+- Expose schema-introspection and query-execution tools over Streamable HTTP.
+- Enforce `WHERE bu_id = @bu_id` on every query.
+- Validate the AST (read-only, no DDL/DML).
+- Verify the HMAC from APIM.
 
-**No hace**:
-- Auth de usuario (lo hace APIM upstream).
-- Caching cross-request (stateless).
+**Does NOT**:
+- Handle user auth (APIM does, upstream).
+- Cache across requests (stateless).
 
 **Day-1 tools (5)**:
-| Namespace | Tool | Descripción |
+| Namespace | Tool | Description |
 |-----------|------|-------------|
-| `schema` | `list_tables` | Lista tablas/views visibles para esta BU (filtradas por `_metadata.agent_allowlist`). |
-| `schema` | `search_tables` | Búsqueda full-text en nombres + descripciones. |
-| `schema` | `describe_table` | Devuelve columnas, tipos, descripciones (extended properties), claves, ejemplos. |
-| `schema` | `get_distinct_values` | Para columnas categóricas pequeñas — devuelve valores únicos. |
-| `query` | `execute` | Ejecuta SELECT validado, con `bu_id` inyectado, retorna filas + metadata. |
+| `schema` | `list_tables` | Lists tables/views visible to this BU (filtered by `_metadata.agent_allowlist`). |
+| `schema` | `search_tables` | Full-text search across names + descriptions. |
+| `schema` | `describe_table` | Returns columns, types, descriptions (extended properties), keys, examples. |
+| `schema` | `get_distinct_values` | For small categorical columns — returns unique values. |
+| `query` | `execute` | Runs a validated SELECT with `bu_id` injected, returns rows + metadata. |
 
 ---
 
-## 7. Flujo de autenticación y BU resolution
+## 7. Authentication flow and BU resolution
 
-### Flujo end-to-end
+### End-to-end flow
 
 ```mermaid
 sequenceDiagram
@@ -392,22 +392,22 @@ sequenceDiagram
     FE->>U: rendered chat
 ```
 
-### BU resolution 4-layer (en APIM, fragment `bu-resolution.xml`)
+### BU resolution 4-layer (at APIM, fragment `bu-resolution.xml`)
 
 ```
-1. JWT claim `extension_bu_id` → si existe, usar
+1. JWT claim `extension_bu_id` → if present, use it
 2. Domain map (Named Value `domain-to-bu-map` JSON) → email domain → bu_id
-3. Header `x-debug-bu` (solo dev, gated por API key extra) → para POC sin claims
-4. Default `BU_ID_DEFAULT` Named Value → fallback final
+3. Header `x-debug-bu` (dev only, gated by an extra API key) → POC without claims
+4. Default `BU_ID_DEFAULT` Named Value → final fallback
 ```
 
-Resultado: `x-bu-id` header siempre presente cuando la petición llega a backend/MCP.
+Outcome: `x-bu-id` header is always present when the request reaches backend/MCP.
 
 ---
 
-## 8. Diseño del MCP
+## 8. MCP design
 
-### Namespacing con `mount(prefix=...)`
+### Namespacing with `mount(prefix=...)`
 
 ```python
 # apps/mcp/app/server.py
@@ -418,13 +418,13 @@ from .query_tools import query_app
 app = FastMCP("calabrio-mcp")
 app.mount(schema_app, prefix="schema")
 app.mount(query_app, prefix="query")
-# Día 2: app.mount(forecast_app, prefix="forecast")
-# Día 2: app.mount(analytics_app, prefix="analytics")
+# Day 2: app.mount(forecast_app, prefix="forecast")
+# Day 2: app.mount(analytics_app, prefix="analytics")
 ```
 
-Los tools quedan expuestos como `schema.list_tables`, `query.execute`, etc.
+Tools end up exposed as `schema.list_tables`, `query.execute`, etc.
 
-### Validación de queries (read-only enforcement)
+### Query validation (read-only enforcement)
 
 ```python
 # apps/mcp/app/validator.py
@@ -444,23 +444,23 @@ def validate_select_only(sql: str) -> None:
             raise ValueError(f"Top-level must be SELECT/WITH, got {type(stmt).__name__}")
 ```
 
-### Forzado de `bu_id`
+### Forcing `bu_id`
 
-`query.execute` siempre inyecta `WHERE bu_id = @bu_id` (o lo añade si falta), usando query parameters (no concatenación). Si la query original ya tiene `bu_id`, se valida que coincida.
+`query.execute` always injects `WHERE bu_id = @bu_id` (or adds it if missing), using query parameters (never concatenation). If the original query already has `bu_id`, the value is validated to match.
 
 ---
 
-## 9. Estrategia de schema (DB ↔ LLM)
+## 9. Schema strategy (DB ↔ LLM)
 
 **Approach C — INFORMATION_SCHEMA + `sys.extended_properties`**
 
-### Por qué
+### Why
 
-- Single source of truth dentro de SQL (no archivos YAML que se desincronizan).
-- Estándar T-SQL (`sp_addextendedproperty`), partner aprueba.
-- Permite descripciones por tabla y por columna (`MS_Description`).
+- Single source of truth inside SQL (no YAML files drifting out of sync).
+- Standard T-SQL (`sp_addextendedproperty`), partner approves.
+- Allows per-table and per-column descriptions (`MS_Description`).
 
-### Tabla `_metadata.agent_allowlist`
+### `_metadata.agent_allowlist` table
 
 ```sql
 CREATE TABLE _metadata.agent_allowlist (
@@ -471,7 +471,7 @@ CREATE TABLE _metadata.agent_allowlist (
 );
 ```
 
-Controla qué tablas/views ve el LLM. **Si no está en allowlist → invisible**.
+Controls which tables/views the LLM sees. **If not in the allowlist → invisible**.
 
 ### `_metadata.tool_audit`
 
@@ -489,34 +489,34 @@ CREATE TABLE _metadata.tool_audit (
 );
 ```
 
-### No usamos aliases
+### No aliases
 
-Decisión D9 explícita: **no mapeamos nombres "amigables" a tablas reales**. El LLM ve los nombres reales + descripciones. Confiamos en su capacidad de razonar sobre nombres técnicos.
+Explicit decision D9: **we do not map "friendly" names to real tables**. The LLM sees real names + descriptions. We trust its ability to reason about technical names.
 
 ---
 
-## 10. Infraestructura Azure
+## 10. Azure infrastructure
 
-### Recursos
+### Resources
 
-| Recurso | Tipo | Nombre | Notas |
-|---------|------|--------|-------|
+| Resource | Type | Name | Notes |
+|----------|------|------|-------|
 | RG | Resource Group | `rg-Calabriomafpoc` | swedencentral |
-| ACA Env | Container Apps Environment | `calabriomafpoc-cae` | Workload profile Consumption + Dedicated (apim VNet integration futuro) |
-| ACR | Container Registry | `calabriomafpocacr` | Premium para geo-replication futuro |
+| ACA Env | Container Apps Environment | `calabriomafpoc-cae` | Workload profile Consumption + Dedicated (apim VNet integration future) |
+| ACR | Container Registry | `calabriomafpocacr` | Premium for future geo-replication |
 | APIM | API Management | `calabriomafpoc-apim` | Standard v2; APIs: `chat-api-dev`, `chat-api-prod`, `mcp-api-dev`, `mcp-api-prod` |
 | Cosmos | Cosmos DB (Core SQL) | `calabriomafpoc-cosmos` | DB `agent-framework`, container `chat-history` (pk `/session_id`) |
-| Foundry | Cognitive Services account + project | `calabriomafpoc-foundry` / `calabriomafpoc-project` | Modelo `gpt-5.2` |
-| App Insights | Monitor | `calabriomafpoc-ai` | Connection string compartido |
-| LAW | Log Analytics | `calabriomafpoc-law` | Sink central |
+| Foundry | Cognitive Services account + project | `calabriomafpoc-foundry` / `calabriomafpoc-project` | Model `gpt-5.2` |
+| App Insights | Monitor | `calabriomafpoc-ai` | Shared connection string |
+| LAW | Log Analytics | `calabriomafpoc-law` | Central sink |
 | Key Vault | KeyVault | `calabriomafpoc-kv` | HMAC secret, SQL password, future certs |
-| SQL | Azure SQL DB | `calabriomafpoc-sqlserver` / `calabriowfm` | Entra-auth preferido |
+| SQL | Azure SQL DB | `calabriomafpoc-sqlserver` / `calabriowfm` | Entra-auth preferred |
 
-### Identidades
+### Identities
 
-- Cada Container App: managed identity (system-assigned).
+- Each Container App: system-assigned managed identity.
 - Backend MI → Cosmos Data Contributor, ACR pull, KV secret reader, App Insights.
-- MCP MI → SQL `db_datareader` (rol custom limitando a allowlist), KV secret reader, App Insights.
+- MCP MI → SQL `db_datareader` (custom role limited to allowlist), KV secret reader, App Insights.
 - Frontend MI → ACR pull, App Insights.
 - APIM MI → KV secret reader (HMAC secret).
 
@@ -524,16 +524,16 @@ Decisión D9 explícita: **no mapeamos nombres "amigables" a tablas reales**. El
 
 ## 11. Testing
 
-### Estrategia piramidal
+### Pyramid strategy
 
 ```
         /\        E2E (tests-e2e/, Playwright)
-       /  \       — flujos completos: login → chat → respuesta
+       /  \       — full flows: login → chat → answer
       /----\
-     / Int. \     Integration por servicio
-    /--------\    — backend: pytest httpx contra FastAPI test client
-   /          \   — mcp: pytest contra FastMCP test client + SQL real (LocalDB o testcontainer)
-  /            \  — frontend: Playwright contra build local
+     / Int. \     Per-service integration
+    /--------\    — backend: pytest httpx against FastAPI test client
+   /          \   — mcp: pytest against FastMCP test client + real SQL (LocalDB or testcontainer)
+  /            \  — frontend: Playwright against local build
  /  Unit tests  \
 /----------------\ Unit
                   — backend: pytest workflows, identity, history
@@ -541,23 +541,23 @@ Decisión D9 explícita: **no mapeamos nombres "amigables" a tablas reales**. El
                   — frontend: vitest hooks, msal-config
 ```
 
-### Cobertura mínima
+### Minimum coverage
 
-- Unit: ≥ 70% por componente.
-- Integration: cada tool MCP + cada endpoint backend.
-- E2E: 5 escenarios críticos (login OK, chat data query OK, chat conversational OK, BU isolation, error path).
+- Unit: ≥ 70% per component.
+- Integration: every MCP tool + every backend endpoint.
+- E2E: 5 critical scenarios (login OK, chat data query OK, chat conversational OK, BU isolation, error path).
 
 ### CI gates
 
-- PR → develop: lint + unit + integration (3 workflows en paralelo).
-- Post-merge develop: E2E (workflow separado, no bloquea PR).
-- PR develop → main: re-run completo + manual approval.
+- PR → develop: lint + unit + integration (3 workflows in parallel).
+- Post-merge develop: E2E (separate workflow, does not block PRs).
+- PR develop → main: full re-run + manual approval.
 
 ---
 
-## 12. DevOps y branching
+## 12. DevOps and branching
 
-### Modelo elegido: **GitFlow-lite**
+### Chosen model: **GitFlow-lite**
 
 ```
 main          ●─────────●─────────●        (production, protected)
@@ -567,25 +567,25 @@ develop       ●──●──●──●──●──●──●──●
 feature/*       ●──●     ●     ●          (short-lived, deleted on merge)
 ```
 
-### Reglas
+### Rules
 
-1. `main` = código en producción. Solo recibe PRs desde `develop`.
-2. `develop` = integración continua. Solo recibe PRs desde `feature/*` o `fix/*`.
-3. **Branches feature**: nacen de `develop`, mueren en `develop` via PR.
+1. `main` = production code. Receives PRs only from `develop`.
+2. `develop` = continuous integration. Receives PRs only from `feature/*` or `fix/*`.
+3. **Feature branches** are born from `develop` and die in `develop` via PR.
 4. Naming:
-   - `feature/<phase>-<short-desc>` (ej. `feature/phase-1-backend-scaffold`)
+   - `feature/<phase>-<short-desc>` (e.g. `feature/phase-1-backend-scaffold`)
    - `fix/<issue-id>-<short-desc>`
    - `docs/<topic>`
    - `chore/<topic>`
-   - `hotfix/<issue-id>` (excepción — directo a `main` con backport a `develop`)
-5. Commits: convencionales (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`).
-6. PR squashed merge a `develop`; merge commit a `main` (preserva linealidad de releases).
+   - `hotfix/<issue-id>` (exception — direct to `main` with backport to `develop`)
+5. Commits: conventional (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`).
+6. Squashed merge into `develop`; merge commit into `main` (preserves linear release history).
 
-### Branch protection (configuración manual en GitHub UI, ver `docs/devops-setup.md`)
+### Branch protection (manual UI setup, see `docs/devops-setup.md`)
 
 **`main`**:
 - ✅ Require PR before merging
-- ✅ Require approvals (1 mínimo, propietario del repo basta porque es proyecto personal)
+- ✅ Require approvals (min 1, or 0 if solo project)
 - ✅ Require status checks to pass before merging
   - `backend-ci`, `frontend-ci`, `mcp-ci`, `infra-validate`
 - ✅ Require conversation resolution
@@ -594,72 +594,72 @@ feature/*       ●──●     ●     ●          (short-lived, deleted on m
 
 **`develop`**:
 - ✅ Require PR before merging
-- ❌ Require approvals (opcional — para learning, mejor con 0 self-approval)
-- ✅ Require status checks (mismos que main)
+- ❌ Require approvals (optional — for learning, 0 self-approval is fine)
+- ✅ Require status checks (same as main)
 - ❌ No force pushes
-- ✅ Allow deletions (no, dejarlo OFF — `develop` no se borra)
+- Allow deletions: OFF — `develop` is never deleted
 
-### Por qué GitFlow-lite y no alternativas
+### Why GitFlow-lite and not the alternatives
 
-| Alternativa | Por qué descartado |
-|-------------|-------------------|
-| GitHub Flow (solo `main` + features) | Sin gate de integración previo a producción; útil para SaaS pequeño, pero para learning DevOps perdemos práctica con merge-trains. |
-| Trunk-Based con feature flags | Requiere disciplina de feature flags desde día 1; over-engineering para v2. |
-| GitFlow completo (release/* + hotfix/*) | Demasiada ceremonia para 1 desarrollador; los release branches no aportan valor sin múltiples versiones soportadas a la vez. |
+| Alternative | Why discarded |
+|-------------|--------------|
+| GitHub Flow (only `main` + features) | No integration gate before production; fine for small SaaS, but loses practice with merge-trains for DevOps learning. |
+| Trunk-Based with feature flags | Requires feature-flag discipline from day 1; over-engineering for v2. |
+| Full GitFlow (release/* + hotfix/*) | Too much ceremony for 1 dev; release branches add no value without multiple supported versions in parallel. |
 
-GitFlow-lite da:
-- Práctica con PRs, code review, branch protection (objetivos DevOps).
-- Gate intermedio (`develop`) para no romper `main`.
-- Hotfix path claro si producción rompe.
-- Naming legible y enseñable.
+GitFlow-lite gives us:
+- Practice with PRs, code review, branch protection (DevOps goals).
+- An intermediate gate (`develop`) so `main` doesn't break.
+- A clear hotfix path if production breaks.
+- Readable and teachable naming.
 
 ---
 
-## 13. Fases del proyecto
+## 13. Project phases
 
-### Phase 0 — Scaffold (este momento)
+### Phase 0 — Scaffold (right now)
 - [x] Cleanup OLD/
-- [x] Eliminar CalabrioMAFVersion
-- [x] Crear PLAN.md
-- [ ] Crear estructura de directorios `apps/`, `infra/`, `docs/`, `tests-e2e/`
-- [ ] READMEs por componente con stub
-- [ ] ADR-0001
-- [ ] `.github/` templates + workflow placeholders
-- [ ] Labels + issues iniciales
-- [ ] Setup branch `develop` + protection
+- [x] Remove CalabrioMAFVersion
+- [x] Create PLAN.md
+- [x] Create directory skeleton `apps/`, `infra/`, `docs/`, `tests-e2e/`
+- [x] Per-component README stubs
+- [x] ADR-0001
+- [x] `.github/` templates + workflow placeholders
+- [ ] Labels + initial issues
+- [ ] Set up `develop` branch + protection
 
 ### Phase 1 — Backend
-Refactor de [main_local_multiturn.py](main_local_multiturn.py ) a `apps/backend/`:
-- Modularizar workflow, history provider, mcp tool factory
+Refactor [main_local_multiturn.py](main_local_multiturn.py ) into `apps/backend/`:
+- Modularize workflow, history provider, mcp tool factory
 - FastAPI + `add_agent_framework_fastapi_endpoint`
 - Identity dependency (parse headers + verify HMAC)
-- Eliminar `candidate_tables` de IntentStep (decisión D10)
-- Settings con pydantic-settings
-- Tests pytest + httpx
-- Dockerfile multi-stage
-- README backend
+- Drop `candidate_tables` from IntentStep (decision D10)
+- Settings via pydantic-settings
+- pytest + httpx tests
+- Multi-stage Dockerfile
+- backend README
 
 ### Phase 2 — MCP
 Greenfield MCP server:
-- FastMCP server con `mount(prefix=...)`
+- FastMCP server with `mount(prefix=...)`
 - `SqlDatabaseClient` (Entra-auth + KV fallback)
 - 5 tools (`schema.list/search/describe/get_distinct_values`, `query.execute`)
 - `sqlglot` validator
-- Scripts bootstrap `_metadata` + seed `extended_properties`
+- Bootstrap scripts for `_metadata` + seed `extended_properties`
 - Drift check (extended props vs INFORMATION_SCHEMA)
-- Tests pytest contra LocalDB o testcontainer
+- pytest against LocalDB or testcontainer
 - Dockerfile
-- README mcp + tool catalog auto-gen
+- mcp README + auto-generated tool catalog
 
 ### Phase 3 — Frontend
-- Next.js 15 scaffold con App Router + Tailwind + shadcn
+- Next.js 15 scaffold with App Router + Tailwind + shadcn
 - MSAL config + provider + protected routes
-- Página login + página chat
-- CopilotKit + AG-UI client apuntando a APIM
-- Selector de BU (POC mode `x-debug-bu`)
+- Login page + chat page
+- CopilotKit + AG-UI client pointing to APIM
+- BU selector (POC mode `x-debug-bu`)
 - Vitest unit + Playwright e2e
-- Dockerfile (node 20 standalone)
-- README frontend
+- Dockerfile (Node 20 standalone)
+- frontend README
 
 ### Phase 4 — APIM
 - 4 policy fragments (`auth-validation`, `bu-resolution`, `hmac-sign`, `rate-limit-per-user`)
@@ -667,24 +667,24 @@ Greenfield MCP server:
 - Named values: `BU_ID_DEFAULT`, `domain-to-bu-map`, `hmac-secret` (from KV)
 - Backend HMAC verify dependency
 - MCP HMAC verify dependency
-- Tests integración APIM ↔ backend ↔ MCP
+- Integration tests APIM ↔ backend ↔ MCP
 
 ### Phase 5 — Infra (Bicep + azd)
-- `main.bicep` + módulos
-- `azd up` end-to-end (1 comando)
+- `main.bicep` + modules
+- `azd up` end-to-end (1 command)
 - RBAC assignments
 - KV secret seeding
 - Tested deploy on swedencentral
 
 ### Phase 6 — Testing + Docs
-- Playwright E2E completos (5 escenarios)
-- Per-component CI workflows funcionando
+- Full Playwright E2E (5 scenarios)
+- Per-component CI workflows working
 - Docs/: architecture, security-model, deployment, troubleshooting, apim-policies, bu-resolution, mcp-tool-catalog (auto-gen)
-- ADR-0002 a ADR-0005
+- ADR-0002 through ADR-0005
 
 ---
 
-## 14. Inventario de variables de entorno
+## 14. Environment variables inventory
 
 ### Backend (`apps/backend/.env.example`)
 ```
@@ -737,30 +737,30 @@ AZURE_ENV_NAME=calabriomafpoc
 AZURE_CONTAINER_REGISTRY_ENDPOINT=calabriomafpocacr.azurecr.io
 ```
 
-### Variables descartadas (legacy)
+### Discarded variables (legacy)
 `USER_QUESTION`, `INTENT_AGENT_NAME`, `SQL_BUILDER_AGENT_NAME`, `QUERY_EXECUTOR_AGENT_NAME`,
 `AGENT_WFM_*`, `ENABLE_HOSTED_AGENTS`, `ENABLE_CAPABILITY_HOST`, `FOUNDRY_AGENT_NAME`,
 `AGENT_SERVER_HOSTED`, `FOUNDRY_MODEL`, `BU_ID` (hardcoded).
 
 ---
 
-## 15. Referencias y artefactos legacy
+## 15. References and legacy artifacts
 
-### `OLD/` (en este repo, archivado)
-- [OLD/main_local.py](OLD/main_local.py ) — single-shot CLI local (predecesor)
-- [OLD/foundry_hosted/](OLD/foundry_hosted/ ) — Foundry hosted agent variant (descartado)
-- [OLD/update_agents.py](OLD/update_agents.py ) — publish/update Foundry Prompt Agents (descartado)
-- [OLD/scripts/](OLD/scripts/ ) — utilidades de deploy (referencia, no portar tal cual)
-- [OLD/.azure/](OLD/.azure/ ) — config azd antigua (reescribir desde cero en `infra/`)
+### `OLD/` (in this repo, archived)
+- [OLD/main_local.py](OLD/main_local.py ) — single-shot local CLI (predecessor)
+- [OLD/foundry_hosted/](OLD/foundry_hosted/ ) — Foundry hosted agent variant (discarded)
+- [OLD/update_agents.py](OLD/update_agents.py ) — publish/update Foundry Prompt Agents (discarded)
+- [OLD/scripts/](OLD/scripts/ ) — deploy utilities (reference, do not port as-is)
+- [OLD/README-v1-archived.md](OLD/README-v1-archived.md ) — original README incl. Cosmos×ServiceIdentity post-mortem
 
-### `CalabrioMAFVersion/` (eliminada del repo, archivada en otro)
-Contenía:
-- `src/apim/policies/chat-api.xml` — base para Phase 4 (reescribir como fragments).
-- `src/mcp_wfm/app/tools.py` — `SqlDatabaseClient` + validación sqlglot (portar a `apps/mcp/`).
-- `src/frontend/` (Angular) — patrones UX, NO portar código (cambiamos stack a Next.js).
-- `database/*.sql` — extraído a `database/` de este repo en Phase 0.
+### `CalabrioMAFVersion/` (removed from repo, archived elsewhere)
+Contained:
+- `src/apim/policies/chat-api.xml` — base for Phase 4 (rewrite as fragments).
+- `src/mcp_wfm/app/tools.py` — `SqlDatabaseClient` + sqlglot validation (port to `apps/mcp/`).
+- `src/frontend/` (Angular) — UX patterns only, do NOT port code (we changed stack to Next.js).
+- `database/*.sql` — extracted to `database/` in this repo during Phase 0.
 
-### Referencia técnica externa
+### External technical references
 
 - [Microsoft Agent Framework docs](https://github.com/microsoft/agent-framework)
 - [`agent_framework.ag_ui` module](https://github.com/microsoft/agent-framework/tree/main/python/packages/ag_ui)
@@ -771,5 +771,5 @@ Contenía:
 
 ---
 
-**Última actualización**: 2026-05-27
-**Próximo hito**: Phase 0 scaffold + setup de `develop` + branch protection
+**Last updated**: 2026-05-27
+**Next milestone**: Phase 0 scaffold + `develop` setup + branch protection

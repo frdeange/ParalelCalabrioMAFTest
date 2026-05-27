@@ -1,14 +1,14 @@
 # Frontend — apps/frontend
 
-> UI chat Next.js 15 + CopilotKit + MSAL (Entra ID). Container App #2.
+> Chat UI: Next.js 15 + CopilotKit + MSAL (Entra ID). Container App #2.
 
-📖 Ver [PLAN.md §6.2](../../PLAN.md#62-frontend-appsfrontend).
+📖 See [PLAN.md §6.2](../../PLAN.md#62-frontend-appsfrontend).
 
-## Estado
+## Status
 
-**Phase 0** — esqueleto vacío. Implementación en **Phase 3**.
+**Phase 0** — empty skeleton. Implementation in **Phase 3**.
 
-## Estructura prevista
+## Planned structure
 
 ```
 app/                       # Next.js App Router
@@ -30,7 +30,7 @@ package.json
 .env.local.example
 ```
 
-## Run (cuando exista)
+## Run (once it exists)
 
 ```bash
 cd apps/frontend
@@ -39,6 +39,6 @@ cp .env.local.example .env.local
 pnpm dev
 ```
 
-## Variables de entorno
+## Environment variables
 
-Ver [PLAN.md §14 Frontend](../../PLAN.md#14-inventario-de-variables-de-entorno).
+See [PLAN.md §14 Frontend](../../PLAN.md#14-environment-variables-inventory).

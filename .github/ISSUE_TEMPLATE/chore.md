@@ -1,21 +1,21 @@
 ---
 name: "🧹 Chore"
-about: "Mantenimiento, deps, config, limpieza"
+about: "Maintenance, deps, config, cleanup"
 title: "[chore] "
 labels: ["🧹 chore"]
 assignees: []
 ---
 
-## 🧹 Tarea
+## 🧹 Task
 
-<!-- bump de deps, limpieza de archivos, alineación de configs, etc. -->
+<!-- dep bump, file cleanup, config alignment, etc. -->
 
-## 🎯 Razón
+## 🎯 Reason
 
-<!-- ¿Por qué ahora? -->
+<!-- Why now? -->
 
 ## ✅ Checklist
 
-- [ ] CI sigue verde tras el cambio
-- [ ] No introduce breaking changes
-- [ ] Docs actualizadas si aplica
+- [ ] CI stays green after the change
+- [ ] No breaking changes introduced
+- [ ] Docs updated if applicable

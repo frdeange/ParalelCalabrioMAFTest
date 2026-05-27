@@ -1,72 +1,72 @@
-# ADR-0001 — Arquitectura general v2
+# ADR-0001 — Overall architecture v2
 
-**Estado**: Aceptado
-**Fecha**: 2026-05-27
-**Decisor**: Owner del proyecto
+**Status**: Accepted
+**Date**: 2026-05-27
+**Decider**: Project owner
 
 ---
 
-## Contexto
+## Context
 
-El proyecto v1 (en repo separado `CalabrioMAFVersion`, ya archivado) usaba:
-- Backend Foundry hosted agent (single binary).
-- MCP propio acoplado al backend.
-- Frontend Angular.
-- APIM monolítico (1 API por entorno).
-- BU resolución parcial vía claim, sin fallback.
+The v1 project (in a separate repo `CalabrioMAFVersion`, now archived) used:
+- Foundry hosted agent backend (single binary).
+- An MCP coupled to the backend.
+- An Angular frontend.
+- A monolithic APIM (1 API per environment).
+- Partial BU resolution via claim, with no fallback.
 
-Tras la iteración local-multiturn ([main_local_multiturn.py](../../main_local_multiturn.py )) validamos un workflow MAF de 3 steps que funciona end-to-end con Cosmos history. Toca decidir cómo evolucionar a una arquitectura productiva.
+After the local-multiturn iteration ([main_local_multiturn.py](../../main_local_multiturn.py )) we validated a 3-step MAF workflow that runs end-to-end with Cosmos history. Time to decide how to evolve to a production-ready architecture.
 
-## Decisión
+## Decision
 
-Adoptamos arquitectura **3-service monorepo** sobre **Azure Container Apps**, con **APIM por delante** de backend y MCP:
+We adopt a **3-service monorepo** architecture on **Azure Container Apps**, with **APIM in front** of backend and MCP:
 
 1. **Frontend**: Next.js 15 + CopilotKit + MSAL → 1 Container App.
 2. **Backend**: FastAPI + `agent_framework.ag_ui` + Cosmos history → 1 Container App.
-3. **MCP**: FastMCP 3.x con `mount(prefix=...)` → 1 Container App.
-4. **APIM**: 4 APIs (`chat-api-dev`, `chat-api-prod`, `mcp-api-dev`, `mcp-api-prod`) + 4 policy fragments reusables.
+3. **MCP**: FastMCP 3.x with `mount(prefix=...)` → 1 Container App.
+4. **APIM**: 4 APIs (`chat-api-dev`, `chat-api-prod`, `mcp-api-dev`, `mcp-api-prod`) + 4 reusable policy fragments.
 
-Tabla completa de decisiones en [PLAN.md §3](../../PLAN.md#3-decisiones-arquitectónicas-locked).
+Full decision table in [PLAN.md §3](../../PLAN.md#3-locked-architectural-decisions).
 
-## Consecuencias positivas
+## Positive consequences
 
-- **Escalado independiente**: el frontend puede escalar en concurrencia de usuarios sin afectar el MCP.
-- **Deploys aislados**: cambiar el MCP no fuerza redeploy del backend.
-- **Revisión de PRs atómica**: monorepo permite que un PR toque contrato BE↔MCP coherentemente.
-- **Stack moderno**: Next.js 15 + CopilotKit ofrece integración nativa con AG-UI sin código glue.
-- **APIM como única superficie pública**: defensa en profundidad, observabilidad central, rate limiting.
+- **Independent scaling**: the frontend can scale on user concurrency without affecting the MCP.
+- **Isolated deploys**: changing the MCP does not force a backend redeploy.
+- **Atomic PR review**: monorepo lets a PR change a BE↔MCP contract coherently.
+- **Modern stack**: Next.js 15 + CopilotKit offers native AG-UI integration with no glue code.
+- **APIM as the only public surface**: defense in depth, central observability, rate limiting.
 
-## Consecuencias negativas
+## Negative consequences
 
-- **Latencia adicional**: APIM añade ~30-80ms por hop. Aceptable para chat (humano no nota < 200ms).
-- **3 imágenes Docker** que mantener vs 1 monolito.
-- **Multi-cloud-init en CI**: cada componente con su pipeline.
-- **APIM Standard SKU**: coste ~$700/mes (developer SKU como alternativa para POC, ~$50/mes pero sin SLA).
+- **Extra latency**: APIM adds ~30-80ms per hop. Acceptable for chat (humans don't notice < 200ms).
+- **3 Docker images** to maintain vs 1 monolith.
+- **Multi-cloud-init in CI**: each component with its own pipeline.
+- **APIM Standard SKU**: ~$700/month (developer SKU as alternative for POC, ~$50/month but no SLA).
 
-## Alternativas consideradas
+## Alternatives considered
 
-### A) Foundry Hosted Agent (heredado de v1)
-- Pros: 1 binario, gestión simple.
-- Contras: lock-in con runtime Foundry; testing local complicado; no permite frontend con AG-UI nativo; debugging opaco. **Descartado**.
+### A) Foundry Hosted Agent (inherited from v1)
+- Pros: 1 binary, simple ops.
+- Cons: lock-in with Foundry runtime; local testing painful; no native AG-UI frontend; opaque debugging. **Discarded**.
 
-### B) Monolito FastAPI (backend + MCP en mismo proceso)
-- Pros: menos infra, menos red.
-- Contras: viola separation of concerns; reuso de MCP por otros clientes (futuro) imposible; escalado acoplado. **Descartado**.
+### B) FastAPI monolith (backend + MCP in same process)
+- Pros: less infra, less network.
+- Cons: violates separation of concerns; future MCP reuse by other clients impossible; coupled scaling. **Discarded**.
 
-### C) Backend en App Service + MCP en Container Apps (mix)
-- Pros: App Service tiene slot swapping.
-- Contras: stack inconsistente; YAGNI (slot swap se simula con Container Apps revisions). **Descartado**.
+### C) Backend in App Service + MCP in Container Apps (mix)
+- Pros: App Service has slot swapping.
+- Cons: inconsistent stack; YAGNI (slot swap can be simulated with Container Apps revisions). **Discarded**.
 
-### D) Frontend en Static Web App (en vez de Container App)
-- Pros: barato, CDN global.
-- Contras: limita SSR/RSC de Next.js 15 (que es donde Next.js brilla); además SWA con backend separado replica complejidad. **Posiblemente reconsiderar en v3** si la app sigue siendo casi-estática.
+### D) Frontend in Static Web App (instead of Container App)
+- Pros: cheap, global CDN.
+- Cons: limits Next.js 15 SSR/RSC (where Next.js shines); SWA + separate backend replicates complexity. **Possibly revisit in v3** if the app stays mostly static.
 
-## Implementación
+## Implementation
 
-Ver [PLAN.md §13 Phases](../../PLAN.md#13-fases-del-proyecto).
+See [PLAN.md §13 Phases](../../PLAN.md#13-project-phases).
 
-## Referencias
+## References
 
-- [PLAN.md](../../PLAN.md ) — este es el documento ancla.
+- [PLAN.md](../../PLAN.md ) — anchor document.
 - [Microsoft Agent Framework — AG-UI](https://github.com/microsoft/agent-framework/tree/main/python/packages/ag_ui)
 - [Azure Container Apps networking](https://learn.microsoft.com/en-us/azure/container-apps/networking)
