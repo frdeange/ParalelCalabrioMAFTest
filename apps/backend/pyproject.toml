@@ -24,33 +24,41 @@ classifiers = [
 # Runtime dependencies. Keep this list aligned with PLAN.md §4 Backend stack.
 #
 # Rule: only declare packages that are NOT pulled transitively by another
-# meta package we already depend on. ``agent-framework==1.6.0`` resolves to
-# ``agent-framework-core[all]==1.6.0``, which alone brings in everything we
-# import directly:
+# package we already depend on. Instead of the ``agent-framework`` meta
+# package (which pulls every provider — Bedrock, Anthropic, Ollama, Mem0,
+# Foundry Local, Hyperlight, Copilot Studio, ChatKit, etc., ballooning the
+# container to ~1.2 GB), we install curated sub-packages.
 #
-#   - ``agent-framework-core`` itself → ``pydantic``, ``python-dotenv``,
-#     ``opentelemetry-api``, ``typing-extensions``
-#   - ``agent-framework-foundry``      → ``azure-ai-projects`` → ``azure-identity``,
-#                                        ``azure-core``
-#   - ``agent-framework-azure-cosmos`` → ``azure-cosmos``
-#   - ``agent-framework-ag-ui``        → ``fastapi``, ``uvicorn[standard]``,
-#                                        ``ag-ui-protocol``
-#   - ``agent-framework-openai``       → ``openai`` (which brings ``httpx``)
-#   - ``agent-framework-mcp`` extra    → ``mcp>=1.24``
-#   - ``agent-framework-orchestrations``, ``agent-framework-observability``, ...
+# Direct deps and what they provide:
 #
-# That means our pyproject lists ONLY the meta package + the two libraries
-# nobody else pulls for us:
-#   - ``azure-monitor-opentelemetry``: we call ``configure_azure_monitor``
-#     directly; this package is NOT included in ``agent-framework[all]``.
-#   - ``pydantic-settings``: we subclass ``BaseSettings``; ``pydantic`` alone
-#     does NOT include the settings module.
+#   - ``agent-framework-core``      → ChatAgent, WorkflowBuilder, Executor,
+#                                     Message, AgentResponse, MCPStreamableHTTPTool
+#                                     (pulls pydantic, python-dotenv,
+#                                     opentelemetry-api, typing-extensions)
+#   - ``agent-framework-orchestrations`` → ``SequentialBuilder`` used in
+#                                     ``app/workflow/build.py``. The class
+#                                     is referenced as
+#                                     ``agent_framework.orchestrations``
+#                                     but the namespace only stub-loads;
+#                                     this sub-package is what actually
+#                                     ships it.
+#   - ``agent-framework-foundry``   → ``agent_framework.openai.AzureOpenAIChatClient``
+#                                     via its ``agent-framework-openai``
+#                                     dep (also pulls ``azure-ai-projects``,
+#                                     ``azure-ai-inference``, ``azure-identity``)
+#   - ``azure-monitor-opentelemetry`` — we call ``configure_azure_monitor``
+#                                     directly; NOT included in any MAF
+#                                     sub-package.
+#   - ``pydantic-settings``          — we subclass ``BaseSettings``;
+#                                     ``pydantic`` alone does NOT include it.
 #
-# If something we import stops being transitively guaranteed in a future
-# ``agent-framework`` release (e.g. ``ag-ui`` extracted out of ``[all]``),
-# add it back here explicitly with a comment.
+# Issue #12 (FastAPI + AG-UI) will add ``agent-framework-ag-ui``.
+# Issue #10 (Cosmos history)  will add ``agent-framework-azure-cosmos``.
+# Tracked in issue #53.
 dependencies = [
-    "agent-framework==1.6.0",
+    "agent-framework-core==1.6.0",
+    "agent-framework-orchestrations==1.0.0rc2",
+    "agent-framework-foundry==1.6.0",
     "azure-monitor-opentelemetry>=1.6",
     "pydantic-settings>=2.5",
 ]
