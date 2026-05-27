@@ -1,30 +1,30 @@
 <!--
-Gracias por contribuir. Por favor completa este template.
-Para más contexto, lee PLAN.md y docs/devops-setup.md.
+Thanks for contributing. Please fill out this template.
+For more context, read PLAN.md and docs/devops-setup.md.
 -->
 
-## 📌 Resumen
+## 📌 Summary
 
-<!-- 1-2 líneas describiendo el cambio. -->
+<!-- 1-2 lines describing the change. -->
 
-## 🎫 Issue relacionado
+## 🎫 Related issue
 
 Closes #
-<!-- O: Refs #N si es trabajo parcial -->
+<!-- Or: Refs #N if it is partial work -->
 
-## 🧭 Tipo de cambio
+## 🧭 Type of change
 
-- [ ] ✨ feat — nueva funcionalidad
+- [ ] ✨ feat — new functionality
 - [ ] 🐛 fix — bugfix
-- [ ] 📚 docs — solo documentación
-- [ ] ♻️ refactor — sin cambio de comportamiento
-- [ ] 🧪 test — añadir / mejorar tests
-- [ ] ⚙️ ci — workflows / config CI
-- [ ] 🧹 chore — mantenimiento
-- [ ] 🔒 security — fix de seguridad
-- [ ] ⚡ perf — optimización
+- [ ] 📚 docs — documentation only
+- [ ] ♻️ refactor — no behavior change
+- [ ] 🧪 test — add / improve tests
+- [ ] ⚙️ ci — workflows / CI config
+- [ ] 🧹 chore — maintenance
+- [ ] 🔒 security — security fix
+- [ ] ⚡ perf — optimization
 
-## 🗂️ Componente(s)
+## 🗂️ Component(s)
 
 - [ ] 🧠 backend (`apps/backend`)
 - [ ] 🎨 frontend (`apps/frontend`)
@@ -36,29 +36,29 @@ Closes #
 
 ## ✅ Checklist
 
-- [ ] Code follows project style (lint pasa)
-- [ ] Self-review hecho
-- [ ] Tests añadidos / actualizados
-- [ ] CI verde
-- [ ] Docs actualizadas si aplica (`PLAN.md`, READMEs, ADRs)
-- [ ] No secrets en el diff
-- [ ] Conventional commit en el título del PR
-- [ ] Branch nace de `develop` (excepto hotfix)
+- [ ] Code follows project style (lint passes)
+- [ ] Self-review done
+- [ ] Tests added / updated
+- [ ] CI green
+- [ ] Docs updated if applicable (`PLAN.md`, READMEs, ADRs)
+- [ ] No secrets in the diff
+- [ ] Conventional commit in the PR title
+- [ ] Branch born from `develop` (except hotfix)
 
-## 🧪 Cómo probar
+## 🧪 How to test
 
-<!-- Pasos para que un reviewer verifique manualmente si aplica. -->
+<!-- Steps for a reviewer to verify manually if applicable. -->
 
 ```bash
-# ejemplo
+# example
 cd apps/backend
 pytest
 ```
 
-## 📸 Screenshots / output (si aplica)
+## 📸 Screenshots / output (if applicable)
 
-<!-- UI changes, logs, métricas. -->
+<!-- UI changes, logs, metrics. -->
 
-## 🔗 Referencias
+## 🔗 References
 
-<!-- Links a docs, ADRs, PRs previos. -->
+<!-- Links to docs, ADRs, previous PRs. -->

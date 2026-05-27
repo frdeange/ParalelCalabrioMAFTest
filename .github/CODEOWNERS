@@ -1,25 +1,25 @@
 # CODEOWNERS — ParalelCalabrioMAF v2
 #
-# Cada path apunta a sus owners. Estos GitHub usuarios son auto-requested
-# como reviewers de PRs que toquen sus archivos.
+# Each path points to its owners. These GitHub users are auto-requested
+# as reviewers of PRs that touch their files.
 #
-# Formato: <path-pattern>   @owner1 @owner2
-# Más info: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+# Format: <path-pattern>   @owner1 @owner2
+# More info: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
-# Default owner para todo
+# Default owner for everything
 *                                       @frdeange
 
-# Documentación crítica del proyecto
+# Critical project documentation
 PLAN.md                                 @frdeange
 docs/adr/                               @frdeange
 docs/devops-setup.md                    @frdeange
 
-# Componentes
+# Components
 apps/backend/                           @frdeange
 apps/frontend/                          @frdeange
 apps/mcp/                               @frdeange
 
-# Infra y APIM
+# Infra and APIM
 infra/                                  @frdeange
 infra/apim-policies/                    @frdeange
 

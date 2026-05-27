@@ -1,28 +1,28 @@
 ---
 name: "📚 Documentation"
-about: "Mejora o corrección de documentación"
+about: "Improve or fix documentation"
 title: "[docs] "
 labels: ["📚 docs"]
 assignees: []
 ---
 
-## 📚 ¿Qué falta o está mal en la documentación?
+## 📚 What is missing or wrong in the docs?
 
-<!-- Sé específico: qué doc, qué sección. -->
+<!-- Be specific: which doc, which section. -->
 
-## 📂 Archivos afectados
+## 📂 Affected files
 
 - [ ] `PLAN.md`
 - [ ] `README.md`
 - [ ] `docs/`
 - [ ] `docs/adr/`
-- [ ] READMEs de componente
-- [ ] Otro: ___
+- [ ] Component READMEs
+- [ ] Other: ___
 
-## ✅ Propuesta
+## ✅ Proposal
 
-<!-- Borrador del contenido a añadir/cambiar. -->
+<!-- Draft of the content to add/change. -->
 
-## 🔗 Issues relacionados
+## 🔗 Related issues
 
-<!-- ej. #12 implementó X pero no se documentó -->
+<!-- e.g. #12 implemented X but did not document it -->

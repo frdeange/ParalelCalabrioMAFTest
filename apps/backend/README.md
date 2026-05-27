@@ -1,14 +1,14 @@
 # Backend — apps/backend
 
-> Orquestación MAF workflow + endpoint AG-UI. Container App #1.
+> MAF workflow orchestration + AG-UI endpoint. Container App #1.
 
-📖 Ver [PLAN.md §6.1](../../PLAN.md#61-backend-appsbackend) para responsabilidades y endpoint.
+📖 See [PLAN.md §6.1](../../PLAN.md#61-backend-appsbackend) for responsibilities and endpoint.
 
-## Estado
+## Status
 
-**Phase 0** — solo esqueleto. Implementación real en **Phase 1** (refactor de [main_local_multiturn.py](../../main_local_multiturn.py )).
+**Phase 0** — skeleton only. Actual implementation in **Phase 1** (refactor of [main_local_multiturn.py](../../main_local_multiturn.py )).
 
-## Estructura prevista
+## Planned structure
 
 ```
 app/
@@ -24,7 +24,7 @@ pyproject.toml
 .env.example
 ```
 
-## Run (cuando exista)
+## Run (once it exists)
 
 ```bash
 cd apps/backend
@@ -33,6 +33,6 @@ cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
 
-## Variables de entorno
+## Environment variables
 
-Ver [PLAN.md §14 Backend](../../PLAN.md#14-inventario-de-variables-de-entorno).
+See [PLAN.md §14 Backend](../../PLAN.md#14-environment-variables-inventory).

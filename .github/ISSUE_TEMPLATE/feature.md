@@ -1,47 +1,47 @@
 ---
 name: "✨ Feature"
-about: "Nueva funcionalidad o capacidad"
+about: "New functionality or capability"
 title: "[feat] "
 labels: ["✨ feature"]
 assignees: []
 ---
 
-## ✨ Descripción
+## ✨ Description
 
-<!-- ¿Qué queremos construir y por qué? -->
+<!-- What do we want to build and why? -->
 
-## 🎯 Objetivo / valor
+## 🎯 Goal / value
 
-<!-- ¿Qué problema resuelve? ¿Para quién? -->
+<!-- What problem does it solve? For whom? -->
 
-## 📋 Criterios de aceptación
+## 📋 Acceptance criteria
 
 - [ ]
 - [ ]
 - [ ]
 
-## 🗂️ Archivos a tocar (estimación)
+## 🗂️ Files to touch (estimate)
 
-<!-- ej. apps/backend/app/workflow.py, apps/mcp/app/server.py -->
+<!-- e.g. apps/backend/app/workflow.py, apps/mcp/app/server.py -->
 
-## 🔗 Dependencias
+## 🔗 Dependencies
 
-- Bloqueado por: <!-- #N -->
-- Bloquea a: <!-- #M -->
-- Paralelizable con: <!-- #X -->
+- Blocked by: <!-- #N -->
+- Blocks: <!-- #M -->
+- Parallelizable with: <!-- #X -->
 
-## 📐 Fase
+## 📐 Phase
 
 <!-- phase-0-scaffold | phase-1-backend | phase-2-mcp | phase-3-frontend | phase-4-apim | phase-5-infra | phase-6-testing-docs -->
 
-## ⏱️ Esfuerzo estimado
+## ⏱️ Estimated effort
 
-<!-- xs (< 1h) | s (1-3h) | m (½ día) | l (1-2 días) | xl (3+ días) -->
+<!-- xs (< 1h) | s (1-3h) | m (½ day) | l (1-2 days) | xl (3+ days) -->
 
-## 🧪 Estrategia de testing
+## 🧪 Testing strategy
 
-<!-- Qué tests añadir: unit / integration / e2e -->
+<!-- What tests to add: unit / integration / e2e -->
 
-## 📝 Notas adicionales
+## 📝 Additional notes
 
-<!-- Referencias a PLAN.md, ADRs, links externos -->
+<!-- References to PLAN.md, ADRs, external links -->

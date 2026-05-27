@@ -1,11 +1,11 @@
 # DevOps Setup
 
-> Guía operativa para colaborar en este repositorio con buenas prácticas DevOps.
-> **El modelo está descrito en [PLAN.md §12](../PLAN.md#12-devops-y-branching).** Este doc es la implementación práctica.
+> Operational guide for collaborating on this repository following DevOps best practices.
+> **The model is described in [PLAN.md §12](../PLAN.md#12-devops-and-branching).** This doc is the practical implementation.
 
 ---
 
-## 1. Modelo de branching (resumen)
+## 1. Branching model (summary)
 
 ```
 main          ●─────●─────●         (protected, production)
@@ -15,126 +15,126 @@ develop       ●──●──●──●──●         (protected, integr
 feature/*       ●──●     ●          (ephemeral)
 ```
 
-- `main` ← merge solo desde `develop` (PR + review + CI verde).
-- `develop` ← merge solo desde `feature/*`, `fix/*`, `docs/*`, `chore/*` (PR + CI verde).
-- Cualquier trabajo nuevo nace de `develop`. **Nunca** se trabaja directamente en `main` ni `develop`.
+- `main` ← merge only from `develop` (PR + review + green CI).
+- `develop` ← merge only from `feature/*`, `fix/*`, `docs/*`, `chore/*` (PR + green CI).
+- All new work is born from `develop`. **Never** work directly on `main` or `develop`.
 
 ---
 
-## 2. Configurar branch protection en GitHub UI
+## 2. Configure branch protection in the GitHub UI
 
-> Esto **debe** hacerlo el owner del repo manualmente. La API permite automatizarlo pero requiere PAT con scope `repo` + `admin:repo_hook` — más fácil hacerlo en UI.
+> This **must** be done by the repo owner manually. The API can automate it but requires a PAT with `repo` + `admin:repo_hook` scope — easier to do in the UI.
 
-### Pasos
+### Steps
 
-1. Ir a https://github.com/frdeange/ParalelCalabrioMAFTest/settings/branches
-2. Clic en **"Add branch ruleset"** (o "Add rule" si está en versión clásica)
+1. Go to https://github.com/frdeange/ParalelCalabrioMAFTest/settings/branches
+2. Click **"Add branch ruleset"** (or "Add rule" in the classic version).
 
-### Regla para `main`
+### Rule for `main`
 
-| Setting | Valor |
+| Setting | Value |
 |---------|-------|
 | Branch name pattern | `main` |
 | Restrict deletions | ✅ ON |
 | Require linear history | ✅ ON |
 | Require a pull request before merging | ✅ ON |
-| → Required approvals | `0` (proyecto personal) o `1` si hay colaboradores |
+| → Required approvals | `0` (solo project) or `1` if collaborators exist |
 | → Dismiss stale PR approvals | ✅ ON |
-| → Require review from Code Owners | ✅ ON (cuando exista `CODEOWNERS`) |
+| → Require review from Code Owners | ✅ ON (once `CODEOWNERS` exists) |
 | Require status checks to pass | ✅ ON |
 | → Required checks | `backend-ci`, `frontend-ci`, `mcp-ci`, `infra-validate` |
 | → Require branches to be up to date | ✅ ON |
 | Require conversation resolution | ✅ ON |
 | Block force pushes | ✅ ON |
 
-### Regla para `develop`
+### Rule for `develop`
 
-Misma configuración pero:
-- Required approvals: `0` (en proyecto unipersonal) — más rápido el merge.
-- Require linear history: ✅ ON (squash merges generan historia lineal).
-- Resto idéntico.
+Same configuration but:
+- Required approvals: `0` (in a solo project) — faster merge.
+- Require linear history: ✅ ON (squash merges produce linear history).
+- Everything else identical.
 
-### Auto-delete head branches (recomendado)
+### Auto-delete head branches (recommended)
 
 `Settings → General → Pull Requests → Automatically delete head branches` ✅ ON.
-Las branches `feature/*` se borran solas al hacer merge.
+`feature/*` branches are deleted automatically on merge.
 
 ---
 
-## 3. Workflow diario
+## 3. Daily workflow
 
-### Empezar un trabajo nuevo
+### Start a new piece of work
 
 ```bash
 # 1. sync develop
 git checkout develop
 git pull origin develop
 
-# 2. branch feature
+# 2. feature branch
 git checkout -b feature/<phase>-<short-desc>
-# ej. feature/phase-1-backend-scaffold
+# e.g. feature/phase-1-backend-scaffold
 
-# 3. trabajar, commitear
+# 3. work, commit
 git add .
 git commit -m "feat(backend): scaffold FastAPI ag-ui endpoint"
 
 # 4. push
 git push -u origin feature/phase-1-backend-scaffold
 
-# 5. PR via gh CLI
+# 5. open PR via gh CLI
 gh pr create --base develop --title "feat(backend): scaffold ag-ui endpoint" --body "Closes #12"
 ```
 
-### Conventional commits (obligatorios)
+### Conventional commits (required)
 
 ```
 <type>(<scope>): <description>
 
-[body opcional]
+[optional body]
 
-[footer opcional: Closes #N]
+[optional footer: Closes #N]
 ```
 
-Types permitidos:
-- `feat` — nueva funcionalidad
+Allowed types:
+- `feat` — new functionality
 - `fix` — bugfix
-- `docs` — solo docs
-- `refactor` — refactor sin cambio de comportamiento
-- `test` — añadir/cambiar tests
-- `chore` — mantenimiento (deps, config)
-- `ci` — cambios en workflows
+- `docs` — documentation only
+- `refactor` — refactor with no behavior change
+- `test` — add/change tests
+- `chore` — maintenance (deps, config)
+- `ci` — workflow changes
 - `perf` — performance
-- `security` — fix de seguridad
+- `security` — security fix
 
-Scopes sugeridos: `backend`, `frontend`, `mcp`, `infra`, `apim`, `db`, `docs`, `ci`.
+Suggested scopes: `backend`, `frontend`, `mcp`, `infra`, `apim`, `db`, `docs`, `ci`.
 
-Ejemplos:
+Examples:
 - `feat(backend): add HMAC verification dependency`
 - `fix(mcp): handle empty result set in query.execute`
 - `docs(plan): clarify BU resolution layer order`
 
-### Naming de branches
+### Branch naming
 
-| Tipo | Pattern | Ejemplo |
+| Type | Pattern | Example |
 |------|---------|---------|
 | Feature | `feature/<phase>-<desc>` | `feature/phase-2-mcp-validator` |
-| Fix (no-prod) | `fix/<issue-id>-<desc>` | `fix/42-mcp-timeout` |
+| Fix (non-prod) | `fix/<issue-id>-<desc>` | `fix/42-mcp-timeout` |
 | Docs | `docs/<topic>` | `docs/adr-0002` |
 | Chore | `chore/<topic>` | `chore/bump-deps` |
 | Hotfix (prod) | `hotfix/<issue-id>` | `hotfix/99-apim-policy-bug` |
 
-### Hotfix path (excepción)
+### Hotfix path (exception)
 
-Si producción rompe y no se puede esperar al ciclo `develop`:
+If production breaks and we cannot wait for the `develop` cycle:
 
 ```bash
 git checkout main
 git pull
 git checkout -b hotfix/<id>
-# arreglar
+# fix
 git commit -m "fix: ..."
-gh pr create --base main          # PR a main
-# tras merge:
+gh pr create --base main          # PR to main
+# after merge:
 git checkout develop
 git merge main                    # backport
 git push origin develop
@@ -144,47 +144,47 @@ git push origin develop
 
 ## 4. Pull Requests
 
-### Checklist obligatorio (en el template)
+### Mandatory checklist (in the template)
 
-- [ ] Tests pasan localmente
-- [ ] Nuevos tests añadidos donde aplica
-- [ ] Docs actualizadas (`PLAN.md` si cambia arquitectura, README del componente si cambia API)
-- [ ] Issue referenciado en el body (`Closes #N`)
-- [ ] CI verde
-- [ ] No secrets en commits
+- [ ] Tests pass locally
+- [ ] New tests added where applicable
+- [ ] Docs updated (`PLAN.md` if architecture changes, component README if API changes)
+- [ ] Issue referenced in body (`Closes #N`)
+- [ ] CI green
+- [ ] No secrets in commits
 
 ### Reviewers
 
-Como proyecto unipersonal de aprendizaje, el owner se auto-revisa. **Aun así**:
-1. PR pequeño y atómico (1 issue = 1 PR, máx ~400 LOC cambiadas).
-2. Esperar 24h antes de mergear PRs no-triviales (para revisar con cabeza fresca).
-3. Si CI rompe, **no mergear con override** — entender el fallo.
+As a solo learning project, the owner self-reviews. **Even so**:
+1. Keep PRs small and atomic (1 issue = 1 PR, max ~400 LOC changed).
+2. Wait 24h before merging non-trivial PRs (review with a fresh head).
+3. If CI fails, **do not merge with override** — understand the failure.
 
 ### Squash vs merge commit
 
-- PR `feature → develop` → **squash and merge** (limpia commits WIP).
-- PR `develop → main` → **merge commit** (preserva las features individuales como referencias del release).
+- PR `feature → develop` → **squash and merge** (cleans WIP commits).
+- PR `develop → main` → **merge commit** (preserves individual features as release references).
 
 ---
 
 ## 5. Issues
 
-### Cuándo crear un issue
+### When to open an issue
 
-Cualquier trabajo > 30 minutos. Si es menos, commit directo con buen mensaje.
+Any work > 30 minutes. Less than that, a direct commit with a good message is fine.
 
-### Estructura
+### Structure
 
-Cada issue lleva:
+Every issue carries:
 - **Type label** (1): `🐛 bug`, `✨ feature`, `📚 docs`, etc.
 - **Component label** (1): `🧠 backend`, `🎨 frontend`, `🔌 mcp`, `🏛️ infra`, `📦 cross-cutting`.
 - **Phase label** (0..1): `🏗️ phase-0-scaffold`, `🔧 phase-1-backend`, etc.
 - **Priority** (1): `🔴 critical`, `🟠 high`, `🟡 medium`, `🟢 low`.
-- **Status** opcional: `🚧 blocked`, `👀 needs-review`, `⚡ parallelizable`.
+- Optional **Status**: `🚧 blocked`, `👀 needs-review`, `⚡ parallelizable`.
 
 ### Template
 
-Ver [.github/ISSUE_TEMPLATE/](../.github/ISSUE_TEMPLATE/) — feature, bug, docs, infra, security, test, refactor, chore.
+See [.github/ISSUE_TEMPLATE/](../.github/ISSUE_TEMPLATE/) — feature, bug, docs, infra, security, test, refactor, chore.
 
 ---
 
@@ -192,38 +192,38 @@ Ver [.github/ISSUE_TEMPLATE/](../.github/ISSUE_TEMPLATE/) — feature, bug, docs
 
 ### Workflows
 
-| Workflow | Trigger | Qué hace |
-|----------|---------|----------|
-| `backend-ci.yml` | PR / push a `apps/backend/**` | lint (ruff) + pytest + build docker |
-| `frontend-ci.yml` | PR / push a `apps/frontend/**` | lint (eslint) + vitest + build next |
-| `mcp-ci.yml` | PR / push a `apps/mcp/**` | lint (ruff) + pytest + build docker |
-| `infra-validate.yml` | PR / push a `infra/**` | bicep build + lint + what-if (no apply) |
-| `e2e-tests.yml` | push a `develop` post-merge | Playwright full suite |
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `backend-ci.yml` | PR / push to `apps/backend/**` | lint (ruff) + pytest + docker build |
+| `frontend-ci.yml` | PR / push to `apps/frontend/**` | lint (eslint) + vitest + next build |
+| `mcp-ci.yml` | PR / push to `apps/mcp/**` | lint (ruff) + pytest + docker build |
+| `infra-validate.yml` | PR / push to `infra/**` | bicep build + lint + what-if (no apply) |
+| `e2e-tests.yml` | push to `develop` post-merge | Full Playwright suite |
 
 ### Path filters
 
-Cada workflow tiene `paths:` para correr solo cuando cambia su componente. Reduce tiempo de CI considerablemente.
+Each workflow uses `paths:` so it runs only when its component changes. Significantly reduces CI time.
 
-### Secrets necesarios (GitHub repo settings → Secrets and variables → Actions)
+### Required secrets (GitHub repo settings → Secrets and variables → Actions)
 
-- `AZURE_CREDENTIALS` (federated identity preferido)
-- `ACR_USERNAME` / `ACR_PASSWORD` (si no se usa federated)
-- `HMAC_SECRET_TEST` (para tests de integración)
+- `AZURE_CREDENTIALS` (federated identity preferred)
+- `ACR_USERNAME` / `ACR_PASSWORD` (if not using federated)
+- `HMAC_SECRET_TEST` (for integration tests)
 
 ---
 
 ## 7. Releases
 
-### Versionado
+### Versioning
 
 SemVer (`vMAJOR.MINOR.PATCH`):
-- `MAJOR` — cambios incompatibles en API pública (raros).
+- `MAJOR` — backwards-incompatible public API changes (rare).
 - `MINOR` — features.
 - `PATCH` — fixes.
 
 ### Tagging
 
-Solo en `main`, tras un merge desde `develop` que represente un release:
+Only on `main`, after a merge from `develop` that represents a release:
 
 ```bash
 git checkout main
@@ -234,19 +234,19 @@ git push origin v0.1.0
 
 ### CHANGELOG
 
-Mantener `CHANGELOG.md` al estilo [Keep a Changelog](https://keepachangelog.com/).
+Maintain `CHANGELOG.md` in [Keep a Changelog](https://keepachangelog.com/) style.
 
 ---
 
-## 8. Onboarding de un colaborador nuevo
+## 8. Onboarding a new collaborator
 
-Pasos manuales:
-1. Añadir como collaborator al repo (Settings → Collaborators).
-2. Compartir acceso a la sub Azure si va a deployar.
-3. Compartir Foundry project si va a tocar agentes.
-4. Crear su entrada en `CODEOWNERS` si va a ser owner de un componente.
-5. Compartir `.env.example` y secretos via canal seguro.
+Manual steps:
+1. Add as collaborator on the repo (Settings → Collaborators).
+2. Share Azure subscription access if they will deploy.
+3. Share Foundry project access if they will touch agents.
+4. Add their entry in `CODEOWNERS` if they become an owner of a component.
+5. Share `.env.example` and secrets through a secure channel.
 
 ---
 
-**Última actualización**: 2026-05-27
+**Last updated**: 2026-05-27
