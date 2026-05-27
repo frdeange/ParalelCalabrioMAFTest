@@ -45,6 +45,8 @@ jobs:
         run: pytest -v --cov=app --cov-report=term-missing
 
   docker-build:
+    # Activated automatically once apps/mcp/Dockerfile lands (issue #24).
+    if: hashFiles('apps/mcp/Dockerfile') != ''
     runs-on: ubuntu-latest
     needs: lint-test
     steps:
