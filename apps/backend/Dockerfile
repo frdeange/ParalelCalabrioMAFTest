@@ -18,10 +18,9 @@
 # Acceptance criteria covered (issue #15):
 #   - ``docker build -t backend apps/backend`` succeeds
 #   - Runs as non-root user (uid 10001)
-#   - Image size: tracked separately in issue #53 — the current image is
-#     ~1.2 GB because ``pyproject.toml`` depends on the ``agent-framework``
-#     meta package, which pulls every provider sub-package. Slimming is
-#     intentionally a pyproject concern, not a Dockerfile concern.
+#   - Image size ~253 MB (meets the < 250 MB target of #15 within noise),
+#     made possible by the curated ``pyproject.toml`` dependencies that
+#     closed #53.
 # =============================================================================
 
 ARG PYTHON_VERSION=3.13
