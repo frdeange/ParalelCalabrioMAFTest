@@ -1,0 +1,49 @@
+# --- VCS / editor noise ---
+.git
+.gitignore
+.gitattributes
+.vscode
+.devcontainer
+.idea
+*.swp
+*.swo
+
+# --- Python caches and build artefacts ---
+__pycache__
+**/__pycache__
+*.py[cod]
+*$py.class
+*.egg-info
+*.egg
+.eggs/
+build/
+dist/
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# --- Local environment / secrets ---
+.env
+.env.*
+!.env.example
+.venv
+venv
+
+# --- Tests ship outside the runtime image ---
+tests/
+
+# --- Docs and tooling that don't belong in the runtime image ---
+# NOTE: ``README.md`` is intentionally NOT excluded — ``pyproject.toml``
+# references it via ``readme = "README.md"`` and ``pip install .`` fails
+# without it being in the build context.
+*.md
+!README.md
+!app/**/*.md
+
+# --- OS noise ---
+.DS_Store
+Thumbs.db
