@@ -63,16 +63,10 @@ docker build -t backend apps/backend
 
 The build context is scoped to `apps/backend/` so only the package source,
 `pyproject.toml`, `README.md` and a few build hints are sent to the daemon
-(see [`.dockerignore`](.dockerignore)).
-
-> 📦 **Image size:** the current image weighs **~1.2 GB**, well above the
-> `< 250 MB` aspiration in #15. The reason is that `pyproject.toml` depends
-> on the `agent-framework` meta package, which transitively pulls every
-> provider (Bedrock, Anthropic, Ollama, Mem0, Foundry Local, Hyperlight,
-> Copilot Studio, …) even though this app only uses the Azure OpenAI + AG-UI
-> + Cosmos sub-packages. Tracked as a follow-up in **[#53](https://github.com/frdeange/ParalelCalabrioMAFTest/issues/53)** —
-> swapping the meta dep for a curated sub-package list is expected to bring
-> the image down to ~400–500 MB without touching the Dockerfile.
+(see [`.dockerignore`](.dockerignore)). The resulting image weighs **~253 MB**
+(meets the `< 250 MB` aspiration of #15 within noise), down from the
+~1.2 GB the `agent-framework` meta package produced — see #53 for the
+curated sub-package list and rationale.
 
 ### Run
 
