@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Documentation
+    url: https://github.com/frdeange/ParalelCalabrioMAFTest/blob/main/PLAN.md
+    about: Read the project plan and architecture before opening an issue.

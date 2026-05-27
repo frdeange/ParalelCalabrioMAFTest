@@ -1,0 +1,51 @@
+name: infra-validate
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/infra-validate.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "infra/**"
+
+jobs:
+  bicep-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bicep
+        run: az bicep install && az bicep version
+
+      - name: Lint Bicep
+        run: |
+          find infra -name "*.bicep" -print0 | xargs -0 -n1 az bicep build --file
+          # If any compile fails, exit non-zero
+
+      - name: APIM policy XML lint
+        run: |
+          # very basic well-formed XML check
+          for f in infra/apim-policies/**/*.xml; do
+            xmllint --noout "$f" || exit 1
+          done
+        # xmllint comes preinstalled on ubuntu-latest
+
+  # TODO: enable once Azure federated credentials configured
+  # what-if:
+  #   needs: bicep-validate
+  #   runs-on: ubuntu-latest
+  #   environment: dev
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: azure/login@v2
+  #       with:
+  #         client-id: ${{ secrets.AZURE_CLIENT_ID }}
+  #         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+  #         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  #     - run: |
+  #         az deployment sub what-if \
+  #           --location swedencentral \
+  #           --template-file infra/main.bicep \
+  #           --parameters infra/main.parameters.json
