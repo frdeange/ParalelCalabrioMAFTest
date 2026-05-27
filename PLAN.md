@@ -752,7 +752,7 @@ The previous iteration lived under `OLD/` and contained:
 - `main_local.py` — single-shot local CLI (predecessor).
 - `main_local_multiturn.py` — multi-turn local CLI; its design is the
   starting point for `apps/backend` (kept at the repo root as
-  `main_local.py` until Phase 1 lands).
+  `main_local_multiturn.py` until Phase 1 lands).
 - `foundry_hosted/` — Foundry Hosted Agent variant. Discarded as the runtime
   host for the backend (see ADR-0006).
 - `update_agents.py` — publish/update Foundry Prompt Agents. Discarded.
