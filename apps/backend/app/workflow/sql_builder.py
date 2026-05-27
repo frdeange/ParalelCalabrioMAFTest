@@ -3,9 +3,9 @@
 The :class:`SqlBuilderStep` is the second executor in the workflow. It
 receives an :class:`IntentBundle`, asks the SQL builder agent to turn the
 resolved question into a single SELECT statement (under a
-``response_format=SqlPlan`` constraint, with MCP ``getSchema`` available
-for schema discovery), and emits a :class:`SqlBundle` for the final
-executor.
+``response_format=SqlPlan`` constraint, with the MCP ``listTables`` and
+``getSchema`` tools available for catalog + schema discovery per PLAN.md
+decision D10), and emits a :class:`SqlBundle` for the final executor.
 
 The agent is responsible for refusing unsafe / malformed asks and for
 applying the mandatory BU scope filter — this module is plumbing only.

@@ -78,11 +78,25 @@ from agent_framework_azure_cosmos import CosmosHistoryProvider
 from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry import trace, metrics
 
+# Phase-0 quickstart compatibility: when this script is run with only the
+# top-level ``requirements.txt`` installed (no ``pip install -e apps/backend``),
+# the ``app`` package is not importable. Prepend ``apps/backend`` to
+# ``sys.path`` so ``from app.workflow import ...`` resolves either way.
+# Once Phase 1 lands the AG-UI FastAPI entrypoint (issue #12), this REPL
+# script becomes a development convenience and the production path uses
+# the installed ``wfm-backend`` package.
+import sys
+from pathlib import Path
+
+_BACKEND_DIR = Path(__file__).resolve().parent / "apps" / "backend"
+if _BACKEND_DIR.is_dir() and str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
 # Workflow Executors, schemas and assembly live in the installed
 # ``wfm-backend`` package (see ``apps/backend/app/workflow``). This module
 # keeps only the REPL glue, the agent factories and the recall_conversation
 # tool wiring; the three Executors are pure code-moved.
-from app.workflow import HISTORY_TURNS, IntentResult, build_workflow
+from app.workflow import HISTORY_TURNS, IntentResult, build_workflow  # noqa: E402
 
 load_dotenv()
 

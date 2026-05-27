@@ -43,6 +43,16 @@ def test_intent_result_has_no_candidate_tables_field() -> None:
     assert "candidate_tables" not in IntentResult.model_fields
 
 
+def test_intent_result_forbids_extra_fields() -> None:
+    # ``extra='forbid'`` is what makes drift fail loudly: e.g. an older
+    # agent (or test fixture) still emitting ``candidate_tables`` must
+    # raise instead of being silently dropped.
+    with pytest.raises(ValidationError):
+        IntentResult.model_validate(
+            {"intent": "DataQuery", "candidate_tables": ["agents"]}
+        )
+
+
 def test_intent_result_requires_intent() -> None:
     with pytest.raises(ValidationError):
         IntentResult()  # type: ignore[call-arg]

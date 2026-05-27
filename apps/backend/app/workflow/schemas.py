@@ -16,7 +16,7 @@ the agents.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class IntentResult(BaseModel):
@@ -26,7 +26,14 @@ class IntentResult(BaseModel):
     schema metadata (tables/columns): it only labels the user turn and
     produces a standalone restatement. The downstream ``SqlBuilderStep``
     discovers tables through the MCP ``listTables`` tool on its own.
+
+    ``extra='forbid'`` so that any drift (e.g. a legacy ``candidate_tables``
+    key still being emitted by an older agent or test fixture) raises a
+    :class:`pydantic.ValidationError` immediately instead of silently
+    dropping the field.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     intent: str
     language_hint: str = "en"

@@ -82,11 +82,25 @@ def build_messages(system_text: str, user_text: str) -> list[Message]:
 
 
 def windowed_history(history: list[Message], turns: int) -> list[Message]:
-    """Return the last *turns* user/assistant pairs of *history*.
+    """Return the trailing slice of *history* the intent classifier should see.
 
-    A "turn" here is one user message plus its corresponding assistant
-    reply. We keep the very last user message even if ``turns=0`` so the
-    classifier always has at least the current question.
+    The algorithm walks *history* from the end backwards and stops once it
+    has crossed (``turns`` + 1) user messages — i.e. the latest user turn
+    plus *turns* prior user turns. Everything visited along the way
+    (including assistant messages that sit between those user turns) is
+    kept and returned in original order.
+
+    Notes / edge cases:
+
+    * If ``turns <= 0`` or *history* is empty, the function returns at most
+      the most recent user message so the classifier always has the
+      current question.
+    * The result is **not** guaranteed to be a sequence of complete
+      user/assistant pairs: a leading assistant message can survive if it
+      precedes the oldest kept user turn, and a trailing user turn without
+      a reply is preserved as-is.
+    * The cutoff is exclusive of the (``turns`` + 1)-th user message: that
+      message is discarded so the window starts cleanly on a user turn.
     """
     if turns <= 0 or not history:
         # Always keep at least the last user message
