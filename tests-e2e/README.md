@@ -1,22 +1,22 @@
 # tests-e2e — Cross-component end-to-end tests
 
-> Playwright tests que ejercitan el flujo completo: Frontend → APIM → Backend → MCP → SQL.
+> Playwright tests that exercise the full flow: Frontend → APIM → Backend → MCP → SQL.
 
-📖 Ver [PLAN.md §11](../PLAN.md#11-testing).
+📖 See [PLAN.md §11](../PLAN.md#11-testing).
 
-## Estado
+## Status
 
-**Phase 0** — esqueleto. Implementación en **Phase 6**.
+**Phase 0** — skeleton. Implementation in **Phase 6**.
 
-## Escenarios planificados (5 críticos)
+## Planned scenarios (5 critical)
 
 1. `auth-flow.spec.ts` — MSAL login redirect OK
-2. `chat-happy-path.spec.ts` — pregunta de datos → respuesta con filas correctas
-3. `chat-conversational.spec.ts` — pregunta conversacional (no SQL) → respuesta directa
-4. `bu-isolation.spec.ts` — usuario de BU 1 no puede ver datos de BU 2
-5. `error-paths.spec.ts` — query inválida → mensaje user-friendly
+2. `chat-happy-path.spec.ts` — data question → answer with correct rows
+3. `chat-conversational.spec.ts` — conversational question (no SQL) → direct answer
+4. `bu-isolation.spec.ts` — a user in BU 1 cannot see data from BU 2
+5. `error-paths.spec.ts` — invalid query → user-friendly message
 
-## Run (cuando exista)
+## Run (once it exists)
 
 ```bash
 cd tests-e2e

@@ -1,47 +1,47 @@
 ---
 name: "🐛 Bug report"
-about: "Reportar un comportamiento incorrecto"
+about: "Report incorrect behavior"
 title: "[bug] "
 labels: ["🐛 bug"]
 assignees: []
 ---
 
-## 🐛 Descripción
+## 🐛 Description
 
-<!-- ¿Qué pasa? Sé conciso y específico. -->
+<!-- What is happening? Be concise and specific. -->
 
-## 🔁 Pasos para reproducir
+## 🔁 Steps to reproduce
 
 1.
 2.
 3.
 
-## ✅ Comportamiento esperado
+## ✅ Expected behavior
 
-<!-- ¿Qué debería pasar? -->
+<!-- What should happen? -->
 
-## ❌ Comportamiento actual
+## ❌ Actual behavior
 
-<!-- ¿Qué pasa realmente? Incluye stack trace si aplica. -->
+<!-- What actually happens? Include a stack trace if applicable. -->
 
-## 🌍 Entorno
+## 🌍 Environment
 
-- Componente afectado: <!-- backend / frontend / mcp / apim / infra -->
-- Branch / commit: <!-- ej. develop @ abc1234 -->
-- Versiones relevantes: <!-- python 3.11, node 20, fastmcp 3.3.1, etc. -->
-- BU_ID en uso: <!-- si aplica -->
+- Affected component: <!-- backend / frontend / mcp / apim / infra -->
+- Branch / commit: <!-- e.g. develop @ abc1234 -->
+- Relevant versions: <!-- python 3.11, node 20, fastmcp 3.3.1, etc. -->
+- BU_ID in use: <!-- if applicable -->
 
-## 📎 Logs / capturas
+## 📎 Logs / screenshots
 
 <details>
 <summary>Logs</summary>
 
 ```
-<!-- pegar logs aquí -->
+<!-- paste logs here -->
 ```
 
 </details>
 
-## 🎯 Severidad propuesta
+## 🎯 Proposed severity
 
 <!-- 🔴 critical | 🟠 high | 🟡 medium | 🟢 low -->

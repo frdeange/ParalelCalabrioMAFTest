@@ -1,14 +1,14 @@
 # Infra — Bicep + APIM policies + azd
 
-> Toda la infraestructura Azure declarada como código.
+> All Azure infrastructure declared as code.
 
-📖 Ver [PLAN.md §10](../PLAN.md#10-infraestructura-azure).
+📖 See [PLAN.md §10](../PLAN.md#10-azure-infrastructure).
 
-## Estado
+## Status
 
-**Phase 0** — esqueleto. Implementación en **Phase 4 (APIM)** + **Phase 5 (Bicep + azd)**.
+**Phase 0** — skeleton. Implementation in **Phase 4 (APIM)** + **Phase 5 (Bicep + azd)**.
 
-## Estructura prevista
+## Planned structure
 
 ```
 main.bicep
@@ -34,12 +34,12 @@ apim-policies/
     └── mcp-api.xml
 ```
 
-## Deploy (cuando exista)
+## Deploy (once it exists)
 
 ```bash
 azd up
 ```
 
-## Variables de entorno (azd)
+## Environment variables (azd)
 
-Ver [PLAN.md §14 Infra](../PLAN.md#14-inventario-de-variables-de-entorno).
+See [PLAN.md §14 Infra](../PLAN.md#14-environment-variables-inventory).

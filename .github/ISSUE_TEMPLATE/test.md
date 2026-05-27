@@ -1,32 +1,32 @@
 ---
 name: "🧪 Test"
-about: "Añadir o mejorar cobertura de tests"
+about: "Add or improve test coverage"
 title: "[test] "
 labels: ["🧪 test"]
 assignees: []
 ---
 
-## 🧪 ¿Qué hay que testear?
+## 🧪 What needs testing?
 
-<!-- Componente, función, flujo. -->
+<!-- Component, function, flow. -->
 
-## 📊 Nivel
+## 📊 Level
 
 - [ ] Unit
 - [ ] Integration
 - [ ] E2E (Playwright)
 - [ ] Smoke
 
-## 📋 Casos a cubrir
+## 📋 Cases to cover
 
 - [ ] Happy path
 - [ ] Edge case: ___
 - [ ] Error path: ___
-- [ ] Regresión de bug #N
+- [ ] Regression of bug #N
 
-## 🎯 Cobertura esperada
+## 🎯 Target coverage
 
-<!-- ej. funcs.py 70% → 90%, o "todos los paths del validator AST" -->
+<!-- e.g. funcs.py 70% → 90%, or "every path of the AST validator" -->
 
 ## 🔗 Test framework
 
