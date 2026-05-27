@@ -4,15 +4,15 @@ All variables are sourced from the process environment, falling back to a
 local ``.env`` file for development (see ``.env.example`` for the full
 inventory and PLAN.md §14 for the canonical list).
 
-Required variables raise :class:`pydantic.ValidationError` at construction
-time — the service fails fast at boot rather than producing confusing
-errors later when an Azure SDK is invoked without credentials.
+Required variables raise :class:`pydantic.ValidationError` at module
+import time — the service fails fast at boot rather than producing
+confusing errors later when an Azure SDK is invoked without credentials.
 
 Usage
 -----
 ::
 
-    from app.settings import settings  # lazy singleton
+    from app.settings import settings
     settings.foundry_project_endpoint
 
 For dependency-injected access in FastAPI handlers::
@@ -26,8 +26,6 @@ For dependency-injected access in FastAPI handlers::
 """
 
 from __future__ import annotations
-
-from functools import lru_cache
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -160,29 +158,18 @@ class Settings(BaseSettings):
     )
 
 
-@lru_cache(maxsize=1)
+# Eagerly instantiate the singleton: importing this module either succeeds
+# with a fully-typed config or fails fast with a clear ValidationError.
+settings = Settings()
+
+
 def get_settings() -> Settings:
-    """Return the cached :class:`Settings` singleton.
+    """Return the module singleton.
 
-    Construction is deferred to first access so that importing this module
-    does not require the full environment to be present (handy for tooling
-    and unit tests that only need to import individual fields/types).
+    Useful as a FastAPI dependency (``Depends(get_settings)``) so tests
+    can swap configuration via ``app.dependency_overrides``.
     """
-    return Settings()
+    return settings
 
 
-def __getattr__(name: str) -> Settings:
-    """Lazy module-level access to the singleton.
-
-    Allows ``from app.settings import settings`` to work without forcing
-    construction at import time. The first attribute read materialises the
-    singleton; subsequent reads return the cached instance.
-    """
-    if name == "settings":
-        return get_settings()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-# ``settings`` is exposed lazily via ``__getattr__`` above, so ruff/F822
-# cannot statically see it as a module attribute. Silence that one warning.
-__all__ = ["Settings", "get_settings", "settings"]  # noqa: F822
+__all__ = ["Settings", "get_settings", "settings"]
