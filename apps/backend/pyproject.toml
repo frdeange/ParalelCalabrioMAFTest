@@ -22,23 +22,37 @@ classifiers = [
 ]
 
 # Runtime dependencies. Keep this list aligned with PLAN.md §4 Backend stack.
-# Versions pinned for the meta packages where stability matters; otherwise
-# floor-only so we pick up patches.
+#
+# Rule: only declare packages that are NOT pulled transitively by another
+# meta package we already depend on. ``agent-framework==1.6.0`` resolves to
+# ``agent-framework-core[all]==1.6.0``, which alone brings in everything we
+# import directly:
+#
+#   - ``agent-framework-core`` itself → ``pydantic``, ``python-dotenv``,
+#     ``opentelemetry-api``, ``typing-extensions``
+#   - ``agent-framework-foundry``      → ``azure-ai-projects`` → ``azure-identity``,
+#                                        ``azure-core``
+#   - ``agent-framework-azure-cosmos`` → ``azure-cosmos``
+#   - ``agent-framework-ag-ui``        → ``fastapi``, ``uvicorn[standard]``,
+#                                        ``ag-ui-protocol``
+#   - ``agent-framework-openai``       → ``openai`` (which brings ``httpx``)
+#   - ``agent-framework-mcp`` extra    → ``mcp>=1.24``
+#   - ``agent-framework-orchestrations``, ``agent-framework-observability``, ...
+#
+# That means our pyproject lists ONLY the meta package + the two libraries
+# nobody else pulls for us:
+#   - ``azure-monitor-opentelemetry``: we call ``configure_azure_monitor``
+#     directly; this package is NOT included in ``agent-framework[all]``.
+#   - ``pydantic-settings``: we subclass ``BaseSettings``; ``pydantic`` alone
+#     does NOT include the settings module.
+#
+# If something we import stops being transitively guaranteed in a future
+# ``agent-framework`` release (e.g. ``ag-ui`` extracted out of ``[all]``),
+# add it back here explicitly with a comment.
 dependencies = [
     "agent-framework==1.6.0",
-    "agent-framework-azure-cosmos",
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
-    "pydantic>=2.9",
-    "pydantic-settings>=2.5",
-    "azure-identity>=1.19",
-    "azure-cosmos>=4.7",
     "azure-monitor-opentelemetry>=1.6",
-    "opentelemetry-api>=1.27",
-    "opentelemetry-sdk>=1.27",
-    "python-dotenv>=1.0",
-    "httpx>=0.27",
-    "typing-extensions>=4.12",
+    "pydantic-settings>=2.5",
 ]
 
 [project.optional-dependencies]
@@ -75,7 +89,15 @@ addopts = [
     "--strict-markers",
     "--strict-config",
 ]
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # ``agent_framework`` emits ExperimentalWarning at import time for any
+    # subclass of an experimental base (e.g. MemoryStore). Match by message
+    # text rather than importing the exception class — importing it would
+    # itself trigger the warning before pytest finishes parsing filters.
+    "ignore:.*is experimental and may change or be removed.*:UserWarning",
+    "ignore:.*is experimental and may change or be removed.*:Warning",
+]
 
 [tool.ruff]
 line-length = 100
