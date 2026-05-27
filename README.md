@@ -17,7 +17,6 @@
 | [database/](./database/ ) | Schema + seed + extended properties | T-SQL |
 | [docs/](./docs/ ) | Architecture, ADRs, runbooks | Markdown |
 | [tests-e2e/](./tests-e2e/ ) | Playwright cross-component | TypeScript |
-| [OLD/](./OLD/ ) | Archived, do not edit | — |
 
 ---
 
