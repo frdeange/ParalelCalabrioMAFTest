@@ -46,6 +46,11 @@ classifiers = [
 #                                     via its ``agent-framework-openai``
 #                                     dep (also pulls ``azure-ai-projects``,
 #                                     ``azure-ai-inference``, ``azure-identity``)
+#   - ``agent-framework-azure-cosmos`` → ``CosmosHistoryProvider`` used by
+#                                     ``app/history/cosmos.py``. Pulls
+#                                     ``azure-cosmos``. Pre-release pin
+#                                     because the package is still in beta;
+#                                     upgrade together with the rest of MAF.
 #   - ``azure-monitor-opentelemetry`` — we call ``configure_azure_monitor``
 #                                     directly; NOT included in any MAF
 #                                     sub-package.
@@ -53,12 +58,12 @@ classifiers = [
 #                                     ``pydantic`` alone does NOT include it.
 #
 # Issue #12 (FastAPI + AG-UI) will add ``agent-framework-ag-ui``.
-# Issue #10 (Cosmos history)  will add ``agent-framework-azure-cosmos``.
 # Tracked in issue #53.
 dependencies = [
     "agent-framework-core==1.6.0",
     "agent-framework-orchestrations==1.0.0rc2",
     "agent-framework-foundry==1.6.0",
+    "agent-framework-azure-cosmos==1.0.0b260521",
     "azure-monitor-opentelemetry>=1.6",
     "pydantic-settings>=2.5",
 ]
