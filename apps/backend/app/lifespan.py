@@ -39,7 +39,9 @@ from agent_framework.observability import create_resource, enable_instrumentatio
 from agent_framework_ag_ui import add_agent_framework_fastapi_endpoint
 from azure.identity.aio import DefaultAzureCredential
 from azure.monitor.opentelemetry import configure_azure_monitor
+from fastapi import Depends
 
+from app.deps.identity import get_caller
 from app.history import get_history_provider
 from app.mcp import build_mcp_tool
 from app.settings import Settings, get_settings
@@ -180,7 +182,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.history_provider = history_provider
         app.state.usage_tracker = usage_tracker
 
-        add_agent_framework_fastapi_endpoint(app, workflow, path=AGUI_PATH)
+        # The identity dependency runs *before* the AG-UI handler, so
+        # an unsigned request never reaches the workflow. We pass it
+        # via ``dependencies=`` rather than wiring it into the
+        # handler signature because the helper owns the handler.
+        add_agent_framework_fastapi_endpoint(
+            app,
+            workflow,
+            path=AGUI_PATH,
+            dependencies=[Depends(get_caller)],
+        )
 
         logger.info(
             "lifespan: workflow ready; AG-UI endpoint mounted at %s", AGUI_PATH
