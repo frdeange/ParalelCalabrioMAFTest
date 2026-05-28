@@ -48,9 +48,25 @@ classifiers = [
 #                             (apps/backend/pyproject.toml:60-64,74) and
 #                             to survive future FastMCP dep-graph
 #                             changes.
+#   - ``pyodbc``            → ``app/clients/sql.py`` connects to Azure SQL
+#                             via the official Microsoft ODBC Driver 18
+#                             (msodbcsql18). The driver itself is a
+#                             system package, installed by the dev
+#                             container's post-create script and by
+#                             ``.github/workflows/mcp-ci.yml``.
+#   - ``azure-identity``    → ``app/clients/sql.py`` uses
+#                             ``DefaultAzureCredential`` to acquire the
+#                             ``https://database.windows.net/.default``
+#                             access token. **No SQL password path
+#                             exists** — per issue #17 policy this is
+#                             the *only* SQL auth mechanism. Key Vault
+#                             is reserved for the HMAC shared secret
+#                             (#47), not for SQL credentials.
 dependencies = [
     "fastmcp==3.3.1",
     "pydantic-settings>=2.5",
+    "pyodbc>=5.2",
+    "azure-identity>=1.19",
 ]
 
 [project.optional-dependencies]
@@ -155,5 +171,5 @@ warn_unused_ignores = true
 warn_return_any = true
 
 [[tool.mypy.overrides]]
-module = ["fastmcp.*", "mcp.*"]
+module = ["fastmcp.*", "mcp.*", "pyodbc"]
 ignore_missing_imports = true

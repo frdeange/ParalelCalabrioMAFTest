@@ -18,7 +18,15 @@ import pytest
 
 # Keep this list in sync with the variables declared in
 # ``apps/mcp/.env.example``. New scaffold-only knobs must be added here.
-_MCP_SCAFFOLD_ENV_VARS = ("MCP_PATH", "MCP_STATELESS", "MCP_LOG_LEVEL")
+_MCP_SCAFFOLD_ENV_VARS = (
+    "MCP_PATH",
+    "MCP_STATELESS",
+    "MCP_LOG_LEVEL",
+    "MCP_AZURE_SQL_SERVER",
+    "MCP_AZURE_SQL_DATABASE",
+    "MCP_AZURE_SQL_MANAGED_IDENTITY_CLIENT_ID",
+    "MCP_ENVIRONMENT",
+)
 
 
 def pytest_configure(config: pytest.Config) -> None:  # noqa: ARG001 - pytest hook signature
