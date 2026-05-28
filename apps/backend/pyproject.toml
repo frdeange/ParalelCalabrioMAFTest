@@ -1,0 +1,185 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ---------------------------------------------------------------------------
+# Project metadata
+# ---------------------------------------------------------------------------
+[project]
+name = "wfm-backend"
+version = "0.1.0"
+description = "WFM Data Assistant — backend service (MAF workflow + AG-UI endpoint)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "frdeange" }]
+keywords = ["wfm", "agent-framework", "maf", "fastapi", "ag-ui"]
+classifiers = [
+    "Private :: Do Not Upload",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+
+# Runtime dependencies. Keep this list aligned with PLAN.md §4 Backend stack.
+#
+# Rule: only declare packages that are NOT pulled transitively by another
+# package we already depend on. Instead of the ``agent-framework`` meta
+# package (which pulls every provider — Bedrock, Anthropic, Ollama, Mem0,
+# Foundry Local, Hyperlight, Copilot Studio, ChatKit, etc., ballooning the
+# container to ~1.2 GB), we install curated sub-packages.
+#
+# Direct deps and what they provide:
+#
+#   - ``agent-framework-core``      → ChatAgent, WorkflowBuilder, Executor,
+#                                     Message, AgentResponse, MCPStreamableHTTPTool
+#                                     (pulls pydantic, python-dotenv,
+#                                     opentelemetry-api, typing-extensions)
+#   - ``agent-framework-orchestrations`` → ``SequentialBuilder`` used in
+#                                     ``app/workflow/build.py``. The class
+#                                     is referenced as
+#                                     ``agent_framework.orchestrations``
+#                                     but the namespace only stub-loads;
+#                                     this sub-package is what actually
+#                                     ships it.
+#   - ``agent-framework-foundry``   → ``agent_framework.openai.AzureOpenAIChatClient``
+#                                     via its ``agent-framework-openai``
+#                                     dep (also pulls ``azure-ai-projects``,
+#                                     ``azure-ai-inference``, ``azure-identity``)
+#   - ``agent-framework-azure-cosmos`` → ``CosmosHistoryProvider`` used by
+#                                     ``app/history/cosmos.py``. Pulls
+#                                     ``azure-cosmos``. Pre-release pin
+#                                     because the package is still in beta;
+#                                     upgrade together with the rest of MAF.
+#   - ``agent-framework-ag-ui``      → ``add_agent_framework_fastapi_endpoint``
+#                                     used in ``app/lifespan.py`` to expose the
+#                                     MAF workflow as the AG-UI SSE endpoint
+#                                     the frontend (CopilotKit) consumes.
+#                                     Release-candidate pin — same MAF major
+#                                     as the rest of the stack.
+#   - ``azure-monitor-opentelemetry`` — we call ``configure_azure_monitor``
+#                                     directly; NOT included in any MAF
+#                                     sub-package.
+#   - ``pydantic-settings``          — we subclass ``BaseSettings``;
+#                                     ``pydantic`` alone does NOT include it.
+#
+# Tracked in issue #53.
+dependencies = [
+    "agent-framework-core==1.6.0",
+    "agent-framework-orchestrations==1.0.0rc2",
+    "agent-framework-foundry==1.6.0",
+    "agent-framework-azure-cosmos==1.0.0b260521",
+    "agent-framework-ag-ui==1.0.0rc3",
+    "azure-monitor-opentelemetry>=1.6",
+    "pydantic-settings>=2.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    # httpx is what the FastAPI ASGI test client uses under the hood. It
+    # is pulled transitively by other deps in CI today but we pin it
+    # here so the test suite does not silently break when a transitive
+    # dep drops it.
+    "httpx>=0.28",
+]
+
+[project.urls]
+Repository = "https://github.com/frdeange/ParalelCalabrioMAFTest"
+Issues = "https://github.com/frdeange/ParalelCalabrioMAFTest/issues"
+
+# ---------------------------------------------------------------------------
+# Build configuration (hatchling)
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.hatch.build.targets.sdist]
+include = ["app", "tests", "README.md", "pyproject.toml", ".env.example"]
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+filterwarnings = [
+    "error",
+    # ``agent_framework`` emits ExperimentalWarning at import time for any
+    # subclass of an experimental base (e.g. MemoryStore). Match by message
+    # text rather than importing the exception class — importing it would
+    # itself trigger the warning before pytest finishes parsing filters.
+    "ignore:.*is experimental and may change or be removed.*:UserWarning",
+    "ignore:.*is experimental and may change or be removed.*:Warning",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage (used by ``pytest --cov`` in CI; issue #14)
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["app"]
+branch = true
+# Don't measure tests themselves — only the production package under
+# ``app/`` counts towards the ≥70% gate.
+omit = ["tests/*"]
+
+[tool.coverage.report]
+# Gate enforced in CI; locally a developer can override with
+# ``pytest --cov-fail-under=0`` while iterating.
+fail_under = 70
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "W",   # pycodestyle warnings
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "C4",  # flake8-comprehensions
+]
+ignore = [
+    "E501", # line length handled by formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+
+[[tool.mypy.overrides]]
+module = ["agent_framework.*", "agent_framework_azure_cosmos.*"]
+ignore_missing_imports = true
