@@ -1,0 +1,56 @@
+name: auto-request-copilot-review
+
+# Auto-requests a code review from the GitHub Copilot reviewer bot whenever
+# a non-draft PR is opened against develop or main. Saves having to click
+# "Request review → Copilot" by hand on every PR.
+#
+# Prerequisites (one-off):
+#
+# * Repo Settings → Code & automation → Copilot → enable "Copilot code
+#   review". Without it the API call returns 422; this workflow logs a
+#   warning but does not fail the job.
+# * The default ``GITHUB_TOKEN`` already has ``pull-requests: write`` when
+#   we ask for it via ``permissions:``; no PAT needed.
+#
+# Triggers:
+#
+# * ``opened``           — first push that opens a PR.
+# * ``ready_for_review`` — PR flipped from draft → ready.
+# * ``reopened``         — closed PR re-opened (useful after a force-push
+#                          that auto-closed it).
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened]
+    branches: [develop, main]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  request-review:
+    # Skip drafts — Copilot would just review WIP code.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request Copilot review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        # ``gh pr edit --add-reviewer copilot-pull-request-reviewer``
+        # is the supported way to ask for a Copilot review. If the bot is
+        # not enabled on the repo the call fails with 422; we swallow the
+        # error so a missing setting doesn't break the workflow — the user
+        # still gets a clear log line.
+        run: |
+          set +e
+          gh pr edit "$PR_NUMBER" \
+            --repo "$REPO" \
+            --add-reviewer copilot-pull-request-reviewer
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::Failed to add Copilot reviewer (status=$status). Is 'Copilot code review' enabled on this repo?"
+          fi
+          exit 0
