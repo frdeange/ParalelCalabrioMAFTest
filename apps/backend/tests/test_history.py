@@ -3,8 +3,8 @@
 Covers the in-memory provider, the structural Protocol check, and the
 ``get_history_provider`` factory's wiring decisions. The Cosmos branch
 is exercised with a mocked builder — we do not stand up an emulator
-here; the real Cosmos integration is covered by an end-to-end smoke
-test in #14.
+here; the real Cosmos integration is covered by the end-to-end smoke
+test that lands together with the FastAPI wiring.
 """
 
 from __future__ import annotations

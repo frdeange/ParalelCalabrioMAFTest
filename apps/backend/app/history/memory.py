@@ -1,7 +1,7 @@
 """In-memory :class:`HistoryProvider` implementation for tests.
 
-This is the test double used by the backend test suite (#14) and any
-local dev scenario that wants to skip Cosmos entirely. It is **not**
+This is the test double used by the backend test suite and any local
+dev scenario that wants to skip Cosmos entirely. It is **not**
 intended for production: there is no persistence, no locking, no TTL,
 and the in-memory dict grows unbounded for the lifetime of the process.
 

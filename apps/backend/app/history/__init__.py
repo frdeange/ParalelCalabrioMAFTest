@@ -6,9 +6,12 @@ needs a swappable in-memory implementation for tests so the suite can
 run without a Cosmos emulator (issue #10, ADR-0006).
 
 The :class:`HistoryProvider` :pep:`544` Protocol below captures *only*
-the surface the backend actually calls — ``get_messages`` and
-``save_messages``, optionally ``clear`` / ``close`` / ``list_sessions``.
-Both production and test implementations are structurally compatible:
+the two methods the backend actually calls — ``get_messages`` and
+``save_messages``. :class:`InMemoryHistoryProvider` adds a few
+housekeeping helpers (``clear``, ``list_sessions``, ``close``) that the
+test suite uses but that are intentionally *not* part of the Protocol
+so production code does not start depending on them. Both production
+and test implementations are structurally compatible:
 
 * :class:`CosmosHistoryProvider` from the official MAF integration
   satisfies the Protocol via duck typing (we re-export a builder from

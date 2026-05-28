@@ -3,12 +3,15 @@
 We define our own Protocol (rather than re-exporting MAF's abstract
 :class:`agent_framework._sessions.HistoryProvider`) for two reasons:
 
-1. The backend only calls a small subset of MAF's surface — ``get_messages``
-   and ``save_messages`` plus a few housekeeping methods. A Protocol keeps
-   the contract focused on what we actually depend on and lets simple
+1. The backend only calls a narrow subset of MAF's surface —
+   ``get_messages`` and ``save_messages``. A Protocol keeps the
+   contract focused on what we actually depend on and lets simple
    in-memory test doubles satisfy it without inheriting MAF's full
    ``ContextProvider`` machinery (``before_run`` / ``after_run`` /
-   ``source_id`` / etc.).
+   ``source_id`` / etc.). Housekeeping helpers such as ``clear`` or
+   ``list_sessions`` are deliberately left out: they exist on
+   :class:`InMemoryHistoryProvider` for test fixtures but production
+   call sites must not rely on them.
 2. Protocol + ``runtime_checkable`` gives us cheap ``isinstance`` checks
    in tests without forcing a base-class relationship.
 
