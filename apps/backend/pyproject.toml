@@ -81,11 +81,12 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.7",
     "mypy>=1.13",
-    # httpx is what the FastAPI ASGI test client uses under the hood. It
-    # is pulled transitively by other deps in CI today but we pin it
-    # here so the test suite does not silently break when a transitive
-    # dep drops it.
+    # ``starlette.testclient`` now imports ``httpx2`` first and emits a
+    # deprecation warning (promoted to an error by pytest) when only the
+    # legacy ``httpx`` package is present. Pin both so the backend test
+    # client keeps working even if transitive deps change again.
     "httpx>=0.28",
+    "httpx2>=2.0",
 ]
 
 [project.urls]
