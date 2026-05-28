@@ -7,7 +7,8 @@ name: auto-request-copilot-review
 # Prerequisites (one-off):
 #
 # * Repo Settings → Code & automation → Copilot → enable "Copilot code
-#   review". Without it the REST call returns 422 and this job goes red.
+#   review". Without it the API call returns 422; this workflow logs a
+#   warning but does not fail the job.
 # * The default ``GITHUB_TOKEN`` already has ``pull-requests: write`` when
 #   we ask for it via ``permissions:``; no PAT needed.
 #
