@@ -110,7 +110,64 @@ def test_default_credential_used_when_none_passed() -> None:
     with patch("app.clients.sql.DefaultAzureCredential") as cred_cls:
         cred_cls.return_value = MagicMock()
         SqlDatabaseClient(server="srv", database="wfm")
-        cred_cls.assert_called_once_with()
+        cred_cls.assert_called_once()
+
+
+def test_default_credential_locks_down_environment_credential() -> None:
+    """``AZURE_CLIENT_SECRET`` is a password by another name. The
+    credential chain must never honour it, regardless of
+    ``MCP_ENVIRONMENT``.
+    """
+    with patch("app.clients.sql.DefaultAzureCredential") as cred_cls:
+        SqlDatabaseClient(server="srv", database="wfm")
+        kwargs = cred_cls.call_args.kwargs
+        assert kwargs["exclude_environment_credential"] is True
+        assert kwargs["exclude_interactive_browser_credential"] is True
+        assert kwargs["exclude_visual_studio_code_credential"] is True
+        assert kwargs["exclude_shared_token_cache_credential"] is True
+        assert kwargs["exclude_powershell_credential"] is True
+        assert kwargs["exclude_developer_cli_credential"] is True
+        assert kwargs["exclude_broker_credential"] is True
+        assert kwargs["exclude_workload_identity_credential"] is True
+
+
+def test_default_credential_local_uses_cli_only() -> None:
+    """In ``environment=local``: ``az login`` allowed, MI blocked."""
+    with patch("app.clients.sql.DefaultAzureCredential") as cred_cls:
+        SqlDatabaseClient(server="srv", database="wfm", environment="local")
+        kwargs = cred_cls.call_args.kwargs
+        assert kwargs["exclude_cli_credential"] is False
+        assert kwargs["exclude_managed_identity_credential"] is True
+
+
+def test_default_credential_azure_uses_mi_only() -> None:
+    """In production: MI allowed, ``az login`` blocked."""
+    with patch("app.clients.sql.DefaultAzureCredential") as cred_cls:
+        SqlDatabaseClient(server="srv", database="wfm", environment="azure")
+        kwargs = cred_cls.call_args.kwargs
+        assert kwargs["exclude_cli_credential"] is True
+        assert kwargs["exclude_managed_identity_credential"] is False
+
+
+def test_managed_identity_client_id_is_pinned() -> None:
+    """UAMI client id flows through to the credential constructor."""
+    uami_id = "11111111-2222-3333-4444-555555555555"
+    with patch("app.clients.sql.DefaultAzureCredential") as cred_cls:
+        SqlDatabaseClient(
+            server="srv",
+            database="wfm",
+            environment="azure",
+            managed_identity_client_id=uami_id,
+        )
+        assert cred_cls.call_args.kwargs["managed_identity_client_id"] == uami_id
+
+
+def test_managed_identity_client_id_empty_passes_none() -> None:
+    """Empty / whitespace ought to translate to ``None`` so MSAL picks
+    the SAMI rather than silently looking up a UAMI with id ``""``."""
+    with patch("app.clients.sql.DefaultAzureCredential") as cred_cls:
+        SqlDatabaseClient(server="srv", database="wfm", managed_identity_client_id="  ")
+        assert cred_cls.call_args.kwargs["managed_identity_client_id"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -133,12 +190,41 @@ def test_connection_string_has_no_password_path() -> None:
     assert "pwd=" not in lowered
     assert "password=" not in lowered
     assert "authentication=" not in lowered
+    assert "trusted_connection=" not in lowered
     # And the bits we *do* expect:
     assert "encrypt=yes" in lowered
     assert "trustservercertificate=no" in lowered
     assert "driver={odbc driver 18 for sql server}" in lowered
     assert "srv.database.windows.net" in conn_str
     assert "Database=wfm" in conn_str
+
+
+@pytest.mark.parametrize(
+    "smuggled",
+    [
+        "Authentication=ActiveDirectoryPassword",
+        "authentication=SqlPassword",
+        "UID=admin",
+        "User ID=admin",
+        "PWD=hunter2",
+        "password=hunter2",
+        "Trusted_Connection=yes",
+    ],
+)
+def test_strip_password_clauses_removes_smuggled_clauses(smuggled: str) -> None:
+    """Belt-and-braces: if a refactor ever pipes a tainted segment in,
+    the sanitizer drops it before it reaches the driver.
+    """
+    tainted = (
+        "Driver={ODBC Driver 18 for SQL Server};"
+        "Server=tcp:srv,1433;Database=wfm;Encrypt=yes;"
+        f"{smuggled};"
+    )
+    cleaned = SqlDatabaseClient._strip_password_clauses(tainted).lower()
+    bad_key = smuggled.split("=", 1)[0].strip().lower()
+    assert bad_key not in cleaned, (
+        f"sanitizer failed to remove {smuggled!r} from connection string"
+    )
 
 
 # ---------------------------------------------------------------------------

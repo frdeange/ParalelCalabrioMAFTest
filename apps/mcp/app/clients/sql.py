@@ -5,11 +5,32 @@ from the MCP server. SQL passwords are forbidden by policy (see
 issue #17): there is no username / password / Key Vault-secret
 fallback, and adding one would be a security regression.
 
+Defence-in-depth posture (ported from ``CalabrioMAFVersion/src/mcp_wfm``)
+-----------------------------------------------------------------------
+1. We never accept a free-form ODBC connection string. We build it
+   from ``server`` + ``database`` ourselves so no ``UID=``/``PWD=``/
+   ``Authentication=`` clause can slip in via env.
+2. :meth:`_strip_password_clauses` runs anyway on the built string as
+   a belt-and-braces guard against a future refactor that adds an
+   ``extra_options`` knob.
+3. The default credential chain is **locked down** via
+   :meth:`_build_default_credential`:
+
+   * In Azure (``environment != "local"``) only Managed Identity is
+     allowed.
+   * Locally only the developer's ``az login`` credential is allowed.
+   * ``EnvironmentCredential`` is *always* disabled — it would honour
+     ``AZURE_CLIENT_SECRET``, which is a password by another name.
+   * Interactive browser / VS Code / shared-token-cache flows are
+     disabled for predictability and to keep prod headless.
+4. The Managed Identity client id can be pinned via
+   ``MCP_AZURE_SQL_MANAGED_IDENTITY_CLIENT_ID`` so MSAL does not pick
+   the wrong UAMI when several are attached to the host.
+
 Authentication recipe
 ---------------------
 1. Acquire an OAuth2 access token for ``https://database.windows.net/.default``
-   via :class:`azure.identity.DefaultAzureCredential` (managed identity in
-   production, ``az login`` developer credential locally).
+   via the locked-down :class:`DefaultAzureCredential`.
 2. Pack the token as UTF-16 LE bytes wrapped in a 4-byte length prefix
    (the structure expected by the Microsoft ODBC Driver 18).
 3. Pass the packed bytes via the ``SQL_COPT_SS_ACCESS_TOKEN`` (1256)
@@ -38,6 +59,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import struct
 import time
 from dataclasses import dataclass
@@ -71,6 +93,13 @@ _TOKEN_REFRESH_BUFFER_SECONDS = 300
 # Default query row cap. Callers may override per-call; this exists
 # only to make accidentally unbounded ``SELECT *`` calls survivable.
 DEFAULT_MAX_ROWS = 1_000
+
+# Connection-string clauses that, if present, would let a non-Entra
+# auth path through the door. The sanitizer drops these clauses
+# unconditionally; the test suite asserts they never sneak back in.
+_FORBIDDEN_CONN_STR_CLAUSES = re.compile(
+    r"(?i)\b(authentication|uid|user\s*id|pwd|password|trusted_connection)\s*="
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +157,8 @@ class SqlDatabaseClient:
         server: str,
         database: str,
         credential: TokenCredential | None = None,
+        managed_identity_client_id: str = "",
+        environment: str = "local",
         driver: str = "ODBC Driver 18 for SQL Server",
     ) -> None:
         if not server or not server.strip():
@@ -143,9 +174,54 @@ class SqlDatabaseClient:
 
         self._server = server
         self._database = database
-        self._credential: TokenCredential = credential or DefaultAzureCredential()
+        self._environment = environment.strip().lower()
+        self._managed_identity_client_id = managed_identity_client_id.strip()
+        self._credential: TokenCredential = credential or self._build_default_credential()
         self._driver = driver
         self._cached_token: AccessToken | None = None
+
+    # ------------------------------------------------------------------
+    # Credential lockdown
+    # ------------------------------------------------------------------
+    def _build_default_credential(self) -> DefaultAzureCredential:
+        """Return a :class:`DefaultAzureCredential` with every
+        non-policy credential type excluded.
+
+        The vanilla :class:`DefaultAzureCredential` tries
+        :class:`EnvironmentCredential` first, which reads
+        ``AZURE_CLIENT_SECRET`` — a password by another name. Issue #17
+        explicitly forbids any password code path, so we disable that
+        credential along with every interactive / cache-backed flow
+        that would only confuse production diagnostics.
+
+        ``environment``-aware:
+
+        * ``local`` → only the developer's ``az login`` credential
+          (``AzureCliCredential``) is enabled.
+        * anything else ("azure", "prod", …) → only Managed Identity
+          is enabled. In Azure containers / App Service / Functions
+          this is the System-Assigned MI, or the UAMI pinned via
+          ``managed_identity_client_id``.
+        """
+        is_local = self._environment == "local"
+        return DefaultAzureCredential(
+            managed_identity_client_id=self._managed_identity_client_id or None,
+            # NEVER allow a client-secret-based credential — that is a
+            # password by another name and would defeat the Entra-only
+            # policy fixed in issue #17.
+            exclude_environment_credential=True,
+            # Production must be headless; local devs use ``az login``.
+            exclude_interactive_browser_credential=True,
+            exclude_visual_studio_code_credential=True,
+            exclude_shared_token_cache_credential=True,
+            exclude_powershell_credential=True,
+            exclude_developer_cli_credential=True,
+            exclude_broker_credential=True,
+            exclude_workload_identity_credential=True,
+            # Production excludes ``az login``; local excludes Managed Identity.
+            exclude_cli_credential=not is_local,
+            exclude_managed_identity_credential=is_local,
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -217,9 +293,12 @@ class SqlDatabaseClient:
 
         No ``UID``, no ``PWD``, no ``Authentication=...`` — the access
         token attr supplied via ``attrs_before`` is the *only*
-        authentication mechanism (see module docstring).
+        authentication mechanism (see module docstring). The result is
+        run through :meth:`_strip_password_clauses` as belt-and-braces
+        defence so a future refactor that adds an ``extra_options``
+        knob cannot silently smuggle a password clause in.
         """
-        return (
+        raw = (
             f"Driver={{{self._driver}}};"
             f"Server=tcp:{self._server},1433;"
             f"Database={self._database};"
@@ -227,6 +306,32 @@ class SqlDatabaseClient:
             "TrustServerCertificate=no;"
             "Connection Timeout=30;"
         )
+        return self._strip_password_clauses(raw)
+
+    @staticmethod
+    def _strip_password_clauses(connection_string: str) -> str:
+        """Drop every ``Authentication=``/``UID=``/``PWD=`` clause.
+
+        Belt-and-braces guardrail: even if a caller (or a future
+        refactor) manages to thread a non-Entra clause into the
+        connection string, this sanitizer removes it before it reaches
+        the driver. The matching test
+        (``test_connection_string_has_no_password_path``) locks the
+        invariant in.
+        """
+        kept: list[str] = []
+        for part in connection_string.split(";"):
+            stripped = part.strip()
+            if not stripped:
+                continue
+            if _FORBIDDEN_CONN_STR_CLAUSES.match(stripped):
+                logger.warning(
+                    "SqlDatabaseClient: stripped forbidden connection-string clause %r",
+                    stripped.split("=", 1)[0],
+                )
+                continue
+            kept.append(stripped)
+        return ";".join(kept) + ";"
 
     async def _acquire_token_struct(self) -> bytes:
         """Return a token packed for ``SQL_COPT_SS_ACCESS_TOKEN``.

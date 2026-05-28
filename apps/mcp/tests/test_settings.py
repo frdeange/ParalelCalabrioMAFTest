@@ -17,6 +17,8 @@ def test_defaults_match_env_example() -> None:
     # ``SqlDatabaseClient.__init__`` when it actually needs them).
     assert s.azure_sql_server is None
     assert s.azure_sql_database is None
+    assert s.azure_sql_managed_identity_client_id == ""
+    assert s.environment == "local"
 
 
 def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,6 +28,11 @@ def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_LOG_LEVEL", "DEBUG")
     monkeypatch.setenv("MCP_AZURE_SQL_SERVER", "foo.database.windows.net")
     monkeypatch.setenv("MCP_AZURE_SQL_DATABASE", "wfm")
+    monkeypatch.setenv(
+        "MCP_AZURE_SQL_MANAGED_IDENTITY_CLIENT_ID",
+        "11111111-2222-3333-4444-555555555555",
+    )
+    monkeypatch.setenv("MCP_ENVIRONMENT", "azure")
 
     s = Settings()  # bypass get_settings to make the override path explicit
     assert s.path == "/custom/"
@@ -33,6 +40,11 @@ def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.log_level == "DEBUG"
     assert s.azure_sql_server == "foo.database.windows.net"
     assert s.azure_sql_database == "wfm"
+    assert (
+        s.azure_sql_managed_identity_client_id
+        == "11111111-2222-3333-4444-555555555555"
+    )
+    assert s.environment == "azure"
 
 
 def test_extra_env_vars_are_ignored(monkeypatch: pytest.MonkeyPatch) -> None:

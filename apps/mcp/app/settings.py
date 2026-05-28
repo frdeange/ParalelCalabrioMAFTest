@@ -57,6 +57,22 @@ class Settings(BaseSettings):
     azure_sql_server: str | None = None
     azure_sql_database: str | None = None
 
+    # Pin the User-Assigned Managed Identity used to acquire SQL access
+    # tokens. Critical in Azure when the container has more than one
+    # UAMI attached — without this pin, MSAL picks one arbitrarily and
+    # the SQL grant may not match. Leave empty to use the
+    # System-Assigned MI or a single UAMI. Ported from
+    # ``CalabrioMAFVersion/src/mcp_wfm/app/config.py``.
+    azure_sql_managed_identity_client_id: str = ""
+
+    # Runtime environment marker, used by
+    # :class:`SqlDatabaseClient` to lock the credential chain down to
+    # *Managed Identity only* in Azure and *az CLI only* in local. The
+    # default chain would also try ``EnvironmentCredential`` (which
+    # honours ``AZURE_CLIENT_SECRET`` — a password by another name) and
+    # interactive browser flows; we explicitly forbid both.
+    environment: str = "local"
+
 
 def get_settings() -> Settings:
     """Return a fresh :class:`Settings` instance.
