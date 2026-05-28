@@ -95,7 +95,7 @@ graph LR
 | D6 | APIM with multi-API per environment (`chat-api-dev`, `chat-api-prod`, `mcp-api-dev`, `mcp-api-prod`) | Strict dev/prod isolation; policies versioned in repo as fragments. |
 | D7 | Reusable Policy Fragments (`auth-validation`, `bu-resolution`, `hmac-sign`, `rate-limit-per-user`) | DRY across APIs; one place to change auth/BU logic. |
 | D8 | BU resolution 4-layer at APIM: (1) JWT claim → (2) domain map (Named Value) → (3) `x-debug-bu` POC header → (4) `BU_ID_DEFAULT` fallback | Works day 1 without claims configured; supports multi-BU with no code changes. |
-| D9 | Schema introspection: INFORMATION_SCHEMA + `sys.extended_properties` (MS_Description) — **no aliases** | Single source of truth inside SQL; partner approves `sp_addextendedproperty`; LLM reads from MCP at runtime. |
+| D9 | Schema introspection: `_metadata.catalog_tables` / `catalog_columns` / `catalog_joins` (seeded by `database/03-seed-data.sql`) — **no aliases** | Single source of truth inside SQL; plain tables are simpler to inspect, edit and version than `sp_addextendedproperty`; LLM reads from MCP at runtime. |
 | D10 | Simplified Intent: kill `candidate_tables` — Intent only classifies (DataQuery / Conversational / OutOfScope); SqlBuilder explores schema on its own (via MCP) | Reduces coupling and tokens; each step does one thing. |
 
 ---
@@ -211,9 +211,6 @@ ParalelCalabrioMAFTest/
 │       │   ├── validator.py         # sqlglot AST validator
 │       │   ├── identity.py          # verify HMAC + parse x-bu-id
 │       │   └── settings.py
-│       ├── scripts/
-│       │   ├── bootstrap_metadata.py  # create _metadata schema + tables
-│       │   └── seed_extended_properties.py
 │       ├── tests/
 │       ├── pyproject.toml
 │       ├── Dockerfile
@@ -242,12 +239,10 @@ ParalelCalabrioMAFTest/
 │           ├── chat-api.xml
 │           └── mcp-api.xml
 ├── database/
-│   ├── 01-schemas-and-tables.sql    # inherited, validated
+│   ├── 01-schemas-and-tables.sql    # wfm/absence/overtime/scheduling + _metadata.catalog_* + tool_audit
 │   ├── 02-views.sql
-│   ├── 03-seed-data.sql              # 1 BU CWFM-DEMO / 3 sites / 50 agents
-│   ├── 04-grant-readonly.sql
-│   ├── 05-metadata-schema.sql        # NEW: _metadata.* tables
-│   └── 06-extended-properties.sql    # NEW: sp_addextendedproperty
+│   ├── 03-seed-data.sql              # 1 BU CWFM-DEMO / 3 sites / 50 agents / seeded catalog
+│   └── 04-grant-readonly.sql
 ├── docs/
 │   ├── architecture.md               # diagrams + ADR index
 │   ├── devops-setup.md               # branch protection + onboarding
@@ -344,9 +339,9 @@ WorkflowBuilder()
 **Day-1 tools (5)**:
 | Namespace | Tool | Description |
 |-----------|------|-------------|
-| `schema` | `list_tables` | Lists tables/views visible to this BU (filtered by `_metadata.agent_allowlist`). |
-| `schema` | `search_tables` | Full-text search across names + descriptions. |
-| `schema` | `describe_table` | Returns columns, types, descriptions (extended properties), keys, examples. |
+| `schema` | `list_tables` | Lists tables/views visible to this BU (filtered by `_metadata.catalog_tables.is_active`). |
+| `schema` | `search_tables` | Keyword search across `_metadata.catalog_tables.table_name + description + keywords`. |
+| `schema` | `describe_table` | Returns columns, types, descriptions, declared joins — sourced from `_metadata.catalog_columns` + `_metadata.catalog_joins`. |
 | `schema` | `get_distinct_values` | For small categorical columns — returns unique values. |
 | `query` | `execute` | Runs a validated SELECT with `bu_id` injected, returns rows + metadata. |
 
@@ -451,46 +446,109 @@ def validate_select_only(sql: str) -> None:
 
 ## 9. Schema strategy (DB ↔ LLM)
 
-**Approach C — INFORMATION_SCHEMA + `sys.extended_properties`**
+**Catalog tables in the `_metadata` schema** — a thin set of
+first-class tables seeded by `database/03-seed-data.sql` that describe
+the WFM domain to the LLM. The MCP `schema.*` tools read from these
+tables; the LLM never inspects `INFORMATION_SCHEMA` or
+`sys.extended_properties` directly.
 
-### Why
+### Why catalog tables instead of extended properties
 
-- Single source of truth inside SQL (no YAML files drifting out of sync).
-- Standard T-SQL (`sp_addextendedproperty`), partner approves.
-- Allows per-table and per-column descriptions (`MS_Description`).
+The original draft of this plan used `sp_addextendedproperty` +
+`sys.extended_properties` (Approach "C"). We pivoted to plain catalog
+tables for these concrete reasons:
 
-### `_metadata.agent_allowlist` table
+- **Inspectability**: `SELECT * FROM _metadata.catalog_tables` instead
+  of joining `sys.tables` + `sys.extended_properties` + filtering by
+  `name = N'MS_Description'`.
+- **Editability**: a normal `UPDATE`/`MERGE` instead of
+  `sp_updateextendedproperty` ceremony per column.
+- **Versioning**: lives in the same SQL migration files as the rest of
+  the schema, no second source of truth.
+- **Bonus columns**: `keywords` (for `schema.search_tables`) and
+  `display_name` (for friendlier UI labels) that extended properties
+  do not naturally support.
+- **RBAC**: the read-only role `uai_readonly` already has
+  `SELECT ON SCHEMA::[_metadata]` — no extra grants on system views.
+
+Decision D9 still stands: the LLM sees **real** table/column names
+from these catalog tables; we do not maintain a friendly-name alias
+layer.
+
+### `_metadata.catalog_tables`
 
 ```sql
-CREATE TABLE _metadata.agent_allowlist (
-    schema_name SYSNAME NOT NULL,
-    table_name  SYSNAME NOT NULL,
-    is_visible  BIT NOT NULL DEFAULT 1,
-    PRIMARY KEY (schema_name, table_name)
+CREATE TABLE _metadata.catalog_tables (
+    table_name  NVARCHAR(128) NOT NULL PRIMARY KEY,
+    schema_name NVARCHAR(128) NOT NULL,
+    description NVARCHAR(500) NOT NULL,
+    keywords    NVARCHAR(500) NOT NULL,  -- comma-separated, fuels schema.search_tables
+    is_active   BIT           NOT NULL DEFAULT (1)  -- the visibility / allowlist gate
 );
 ```
 
-Controls which tables/views the LLM sees. **If not in the allowlist → invisible**.
+`is_active = 0` makes a table invisible to the agent without dropping
+the row — same role the original draft assigned to
+`_metadata.agent_allowlist.is_visible`.
+
+### `_metadata.catalog_columns`
+
+```sql
+CREATE TABLE _metadata.catalog_columns (
+    table_name   NVARCHAR(128) NOT NULL,
+    column_name  NVARCHAR(128) NOT NULL,
+    data_type    NVARCHAR(50)  NOT NULL,
+    is_nullable  BIT           NOT NULL,
+    description  NVARCHAR(500) NOT NULL,
+    display_name NVARCHAR(100) NULL,
+    PRIMARY KEY (table_name, column_name),
+    FOREIGN KEY (table_name) REFERENCES _metadata.catalog_tables (table_name)
+);
+```
+
+### `_metadata.catalog_joins`
+
+```sql
+CREATE TABLE _metadata.catalog_joins (
+    source_table NVARCHAR(128) NOT NULL,
+    target_table NVARCHAR(128) NOT NULL,
+    join_column  NVARCHAR(128) NOT NULL,
+    join_type    NVARCHAR(20)  NOT NULL DEFAULT (N'INNER'),
+    PRIMARY KEY (source_table, target_table, join_column)
+);
+```
+
+Served by `schema.describe_table` so the LLM does not have to guess
+join paths between, e.g., `analytics.vw_PersonDetail` and
+`analytics.vw_OvertimeRequest`.
 
 ### `_metadata.tool_audit`
 
 ```sql
 CREATE TABLE _metadata.tool_audit (
-    id BIGINT IDENTITY PRIMARY KEY,
-    ts DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-    bu_id INT NOT NULL,
-    user_oid NVARCHAR(64),
-    tool_name NVARCHAR(100),
-    sql_text NVARCHAR(MAX),
-    row_count INT,
-    duration_ms INT,
-    success BIT
+    audit_id      BIGINT IDENTITY PRIMARY KEY,
+    ts            DATETIME2(3) NOT NULL DEFAULT SYSUTCDATETIME(),
+    bu_id         INT          NOT NULL,
+    user_oid      NVARCHAR(64),
+    tool_name     NVARCHAR(100) NOT NULL,
+    tool_args     NVARCHAR(MAX),
+    sql_text      NVARCHAR(MAX),
+    row_count     INT,
+    duration_ms   INT,
+    success       BIT          NOT NULL,
+    error_message NVARCHAR(2000)
 );
 ```
 
+Append-only — the MCP server inserts one row per `schema.*` / `query.*`
+call. `uai_readonly` has narrow `INSERT` on this table only; UPDATE /
+DELETE are not granted by policy.
+
 ### No aliases
 
-Explicit decision D9: **we do not map "friendly" names to real tables**. The LLM sees real names + descriptions. We trust its ability to reason about technical names.
+Decision D9: **we do not map "friendly" names to real tables**. The
+LLM sees real names + descriptions. We trust its ability to reason
+about technical names.
 
 ---
 
@@ -644,8 +702,8 @@ Greenfield MCP server:
 - `SqlDatabaseClient` (Entra-auth **only** via `DefaultAzureCredential` — SQL passwords are explicitly forbidden, see #17)
 - 5 tools (`schema.list/search/describe/get_distinct_values`, `query.execute`)
 - `sqlglot` validator
-- Bootstrap scripts for `_metadata` + seed `extended_properties`
-- Drift check (extended props vs INFORMATION_SCHEMA)
+- Catalog metadata in `_metadata.catalog_tables/columns/joins` (DDL in `database/01-schemas-and-tables.sql`, seed in `database/03-seed-data.sql`)
+- Append-only `_metadata.tool_audit` populated by the MCP server
 - pytest against LocalDB or testcontainer
 - Dockerfile
 - mcp README + auto-generated tool catalog
