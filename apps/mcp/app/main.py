@@ -25,12 +25,22 @@ Design notes
 
 from __future__ import annotations
 
+import logging
+
 from fastmcp import FastMCP
 
 from .servers import query_server, schema_server
 from .settings import get_settings
 
 settings = get_settings()
+
+# Apply the log level from settings to the root logger. uvicorn /
+# FastMCP loggers inherit from root unless explicitly configured, so a
+# single ``basicConfig`` is enough for the scaffold. ``force=True``
+# overrides any prior configuration that may have been installed by
+# imported libraries (e.g. ``fastmcp`` calls ``logging.basicConfig`` on
+# first use of ``rich`` handlers).
+logging.basicConfig(level=settings.log_level.upper(), force=True)
 
 #: Root MCP server. Holds no tools of its own; everything is reached
 #: through the mounted sub-servers.

@@ -25,21 +25,32 @@ classifiers = [
 #
 # Rule (mirrors apps/backend): only declare packages we ``import`` or
 # ``uvicorn`` directly. Packages pulled transitively by ``fastmcp`` are
-# intentionally NOT redeclared to keep the manifest honest.
+# intentionally NOT redeclared to keep the manifest honest — EXCEPT
+# when we already import the package directly (then we declare it
+# explicitly so the manifest matches the import graph and a transitive
+# drop doesn't silently break us).
 #
 #   - ``fastmcp``           → ``FastMCP``, ``Client``, the Streamable HTTP
 #                             transport via ``http_app()``. Pulls
 #                             ``fastmcp-slim[server,client]`` which in
 #                             turn brings ``mcp``, ``starlette``,
-#                             ``uvicorn``, ``pydantic``, ``pydantic-settings``,
-#                             ``rich``, ``httpx`` and friends. Pinned to
-#                             the exact version called out in
-#                             ``PLAN.md`` §6.3 so dependency drift
-#                             cannot silently change tool registration
-#                             semantics (``namespace`` vs deprecated
-#                             ``prefix``, in-memory ``Client`` shape).
+#                             ``uvicorn``, ``pydantic``, ``rich``,
+#                             ``httpx`` and friends. Pinned to the exact
+#                             version called out in ``PLAN.md`` §6.3 so
+#                             dependency drift cannot silently change
+#                             tool registration semantics (``namespace``
+#                             vs deprecated ``prefix``, in-memory
+#                             ``Client`` shape).
+#   - ``pydantic-settings`` → ``app/settings.py`` subclasses
+#                             ``BaseSettings``. fastmcp-slim already
+#                             pulls it (``pydantic-settings>=2.0.0``)
+#                             but we redeclare to mirror backend's rule
+#                             (apps/backend/pyproject.toml:60-64,74) and
+#                             to survive future FastMCP dep-graph
+#                             changes.
 dependencies = [
     "fastmcp==3.3.1",
+    "pydantic-settings>=2.5",
 ]
 
 [project.optional-dependencies]

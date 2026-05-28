@@ -53,7 +53,7 @@ uvicorn app.main:app --port 8001
 
 `pytest` works without any env override — defaults in [`app/settings.py`](app/settings.py) match [`.env.example`](.env.example).
 
-> ⚠️ **Monorepo gotcha**: this service and [`apps/backend`](../backend/) both ship a top-level `app/` package. If you have **both** installed editable in the same Python env (the dev container default), `pytest` from `apps/mcp/` resolves `app` correctly thanks to `pythonpath = ["."]` in [pyproject.toml](pyproject.toml), but bare `python -c "import app"` from anywhere else will pick whichever pth file comes first alphabetically (backend). In production each container ships only its own wheel, so the collision is dev-only.
+> ⚠️ **Monorepo gotcha**: this service and [`apps/backend`](../backend/) both ship a top-level `app/` package. If you `pip install -e .` both in the same Python env (e.g. while working on cross-service changes locally), alphabetical `.pth` ordering makes `wfm-backend` win bare `import app` calls. `pytest` from `apps/mcp/` resolves `app` correctly thanks to `pythonpath = ["."]` in [pyproject.toml](pyproject.toml). The dev container does **not** install either service editable by default — you opt in per service — so the collision is something you only hit if you explicitly install both. In production each container ships only its own wheel.
 
 ## Environment variables
 

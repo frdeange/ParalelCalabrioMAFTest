@@ -79,3 +79,21 @@ async def test_ping_tool_returns_ok_payload() -> None:
         result = await client.call_tool("schema_ping", {})
 
     assert result.data == {"namespace": "schema", "status": "ok"}
+
+
+def test_log_level_setting_is_applied_to_root_logger() -> None:
+    """``Settings.log_level`` is honoured by ``logging.basicConfig`` in
+    :mod:`app.main`.
+
+    Defaults to ``INFO`` (per ``.env.example``). We assert ``<= INFO``
+    rather than ``== INFO`` so a developer overriding ``MCP_LOG_LEVEL``
+    locally does not flake the test \u2014 the contract is "main wires the
+    setting", not "the level is exactly INFO".
+    """
+    import logging
+
+    # ``logging.basicConfig`` only takes effect on first call unless
+    # ``force=True``; main.py uses ``force=True`` so the root logger
+    # level reflects the value from settings even if pytest itself or a
+    # third-party plugin had previously configured logging.
+    assert logging.getLogger().level <= logging.INFO
