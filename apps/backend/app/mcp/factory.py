@@ -103,6 +103,16 @@ def build_mcp_tool(
         tool_name_prefix if tool_name_prefix is not None else settings.mcp_tool_prefix
     )
 
+    # ``str`` is a ``Collection[str]`` of its characters, so a caller
+    # accidentally passing ``allowed_tools="executeQuery"`` would end
+    # up whitelisting the letters ``e``, ``x``, ``c``... — a silent and
+    # very confusing footgun. Reject it explicitly with a clear error.
+    if isinstance(allowed_tools, str):
+        raise TypeError(
+            "allowed_tools must be a collection of tool names, not a bare "
+            f"string (got {allowed_tools!r}); pass e.g. [{allowed_tools!r}]."
+        )
+
     return MCPStreamableHTTPTool(
         name=name or settings.mcp_tool_name,
         url=settings.mcp_server_url,

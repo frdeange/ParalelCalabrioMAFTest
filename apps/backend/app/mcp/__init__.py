@@ -22,8 +22,9 @@ both share the same:
   ``settings.mcp_tool_prefix``), so traces and tool names are
   consistent, and
 * outbound header pipeline — e.g. the HMAC signature the backend will
-  add when talking through APIM in production (see ``app/security/hmac.py``
-  once #13 lands).
+  add when talking through APIM in production (the actual signing
+  helper lands with issue #13; this factory just exposes the
+  ``header_provider`` hook to plug it in).
 
 See PLAN.md §6.3 ("MCP design") and decision D10.
 """

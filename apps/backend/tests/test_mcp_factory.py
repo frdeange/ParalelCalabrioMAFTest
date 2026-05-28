@@ -85,6 +85,18 @@ def test_build_mcp_tool_allowed_tools_round_trips() -> None:
     assert tool.allowed_tools == ["executeQuery"]
 
 
+def test_build_mcp_tool_rejects_bare_string_allowed_tools() -> None:
+    """Guard the ``str``-is-a-``Collection[str]`` footgun.
+
+    Passing ``allowed_tools="executeQuery"`` would otherwise silently
+    whitelist the individual characters of the tool name.
+    """
+    settings = _settings()
+
+    with pytest.raises(TypeError, match="not a bare string"):
+        build_mcp_tool(settings, allowed_tools="executeQuery")  # type: ignore[arg-type]
+
+
 def test_build_mcp_tool_allowed_tools_none_keeps_everything() -> None:
     settings = _settings()
 
