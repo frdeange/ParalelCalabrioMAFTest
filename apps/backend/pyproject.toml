@@ -51,19 +51,25 @@ classifiers = [
 #                                     ``azure-cosmos``. Pre-release pin
 #                                     because the package is still in beta;
 #                                     upgrade together with the rest of MAF.
+#   - ``agent-framework-ag-ui``      → ``add_agent_framework_fastapi_endpoint``
+#                                     used in ``app/lifespan.py`` to expose the
+#                                     MAF workflow as the AG-UI SSE endpoint
+#                                     the frontend (CopilotKit) consumes.
+#                                     Release-candidate pin — same MAF major
+#                                     as the rest of the stack.
 #   - ``azure-monitor-opentelemetry`` — we call ``configure_azure_monitor``
 #                                     directly; NOT included in any MAF
 #                                     sub-package.
 #   - ``pydantic-settings``          — we subclass ``BaseSettings``;
 #                                     ``pydantic`` alone does NOT include it.
 #
-# Issue #12 (FastAPI + AG-UI) will add ``agent-framework-ag-ui``.
 # Tracked in issue #53.
 dependencies = [
     "agent-framework-core==1.6.0",
     "agent-framework-orchestrations==1.0.0rc2",
     "agent-framework-foundry==1.6.0",
     "agent-framework-azure-cosmos==1.0.0b260521",
+    "agent-framework-ag-ui==1.0.0rc3",
     "azure-monitor-opentelemetry>=1.6",
     "pydantic-settings>=2.5",
 ]
@@ -75,6 +81,11 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.7",
     "mypy>=1.13",
+    # httpx is what the FastAPI ASGI test client uses under the hood. It
+    # is pulled transitively by other deps in CI today but we pin it
+    # here so the test suite does not silently break when a transitive
+    # dep drops it.
+    "httpx>=0.28",
 ]
 
 [project.urls]
