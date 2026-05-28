@@ -123,6 +123,29 @@ filterwarnings = [
     "ignore:.*is experimental and may change or be removed.*:Warning",
 ]
 
+# ---------------------------------------------------------------------------
+# Coverage (used by ``pytest --cov`` in CI; issue #14)
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["app"]
+branch = true
+# Don't measure tests themselves — only the production package under
+# ``app/`` counts towards the ≥70% gate.
+omit = ["tests/*"]
+
+[tool.coverage.report]
+# Gate enforced in CI; locally a developer can override with
+# ``pytest --cov-fail-under=0`` while iterating.
+fail_under = 70
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
