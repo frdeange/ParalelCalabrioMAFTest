@@ -1,52 +1,66 @@
 # MCP — apps/mcp
 
-> FastMCP server with schema introspection and query execution tools. Container App #3.
+> FastMCP server with schema-introspection and query-execution tools. Container App #3.
 
 📖 See [PLAN.md §6.3](../../PLAN.md#63-mcp-appsmcp) and [PLAN.md §8](../../PLAN.md#8-mcp-design).
 
 ## Status
 
-**Phase 0** — empty skeleton. Implementation in **Phase 2**.
+**Phase 2 — in progress.** The FastMCP root server, the two namespaced sub-servers (`schema` / `query`) and the Streamable HTTP ASGI entrypoint are in place ([#16](https://github.com/frdeange/ParalelCalabrioMAFTest/issues/16)). Day-1 tools, the SQL client, the validator and the Dockerfile land in the remaining Phase 2 issues.
 
 ## Day-1 tools (5)
 
-| Namespace | Tool |
-|-----------|------|
-| `schema` | `list_tables` |
-| `schema` | `search_tables` |
-| `schema` | `describe_table` |
-| `schema` | `get_distinct_values` |
-| `query`  | `execute` (read-only, `bu_id` enforced) |
+| Namespace | Tool | Status |
+|-----------|------|--------|
+| `schema`  | `list_tables` | ⏳ #18 |
+| `schema`  | `search_tables` | ⏳ #18 |
+| `schema`  | `describe_table` | ⏳ #18 |
+| `schema`  | `get_distinct_values` | ⏳ #18 |
+| `query`   | `execute` (read-only, `bu_id` enforced) | ⏳ #20 (depends on #17 + #19) |
 
-## Planned structure
+Both sub-servers currently expose a placeholder `ping` tool so MCP discovery returns the two namespaces (`schema_ping`, `query_ping`) before the real tools land.
+
+## Structure
 
 ```
 app/
-├── server.py            # FastMCP + mount(prefix=...)
-├── schema_tools.py
-├── query_tools.py
-├── sql_client.py        # Entra-auth + KV fallback
-├── validator.py         # sqlglot AST validator
-├── identity.py          # verify HMAC + x-bu-id
-└── settings.py
-scripts/
-├── bootstrap_metadata.py   # create _metadata schema
-└── seed_extended_properties.py
-tests/
-Dockerfile
-pyproject.toml
-.env.example
+├── __init__.py         ✅
+├── main.py             ✅ root FastMCP + mount(namespace=…) + ASGI app (#16)
+├── settings.py         ✅ pydantic-settings (MCP_PATH / MCP_STATELESS / MCP_LOG_LEVEL) (#16)
+└── servers/            ✅ mounted sub-servers (#16)
+    ├── __init__.py
+    ├── schema.py       ✅ FastMCP("calabrio-mcp-schema") + placeholder ping
+    └── query.py        ✅ FastMCP("calabrio-mcp-query")  + placeholder ping
+tests/                  ✅ 8 tests, 97% cov (settings + discovery)
+pyproject.toml          ✅
+.env.example            ✅
+scripts/                ⏳ #21 bootstrap_metadata.py / seed_extended_properties.py
+Dockerfile              ⏳ #24
 ```
 
-## Run (once it exists)
+> Tools the issue tracker references that are **not** in this scaffold yet:
+> `sql_client.py` (#17), `validator.py` (#19), `identity.py` (HMAC verification, Phase 2 follow-up).
+
+## Run (local)
 
 ```bash
 cd apps/mcp
 pip install -e ".[dev]"
 cp .env.example .env
-uvicorn app.server:app --port 8001
+uvicorn app.main:app --port 8001
+# → POST http://localhost:8001/mcp/ for Streamable HTTP requests
 ```
+
+`pytest` works without any env override — defaults in [`app/settings.py`](app/settings.py) match [`.env.example`](.env.example).
+
+> ⚠️ **Monorepo gotcha**: this service and [`apps/backend`](../backend/) both ship a top-level `app/` package. If you `pip install -e .` both in the same Python env (e.g. while working on cross-service changes locally), alphabetical `.pth` ordering makes `wfm-backend` win bare `import app` calls. `pytest` from `apps/mcp/` resolves `app` correctly thanks to `pythonpath = ["."]` in [pyproject.toml](pyproject.toml). The dev container does **not** install either service editable by default — you opt in per service — so the collision is something you only hit if you explicitly install both. In production each container ships only its own wheel.
 
 ## Environment variables
 
-See [PLAN.md §14 MCP](../../PLAN.md#14-environment-variables-inventory).
+See [PLAN.md §14 MCP](../../PLAN.md#14-environment-variables-inventory). The scaffold only consumes the three knobs in [`.env.example`](.env.example); the SQL / KV / HMAC settings land in the matching Phase 2 issues.
+
+## Design highlights
+
+* **Mounting**: PLAN.md §8 calls the kwarg `prefix=`, but FastMCP 3.x renamed it to `namespace=` (the old name still works but emits a `DeprecationWarning`). Behaviour is identical: tools end up exposed as `<namespace>_<tool_name>` — see `tests/test_discovery.py` for the contract.
+* **Stateless Streamable HTTP** (PLAN.md §6.3, "Does NOT cache across requests"). `app/main.py` passes `stateless_http=True` to `http_app()`; every request gets a fresh transport.
+* **Two module-level names** — `mcp` (the `FastMCP` instance) and `app` (the Starlette ASGI app `uvicorn` consumes). Tests can use `fastmcp.Client(mcp)` for in-memory transport without spinning HTTP.

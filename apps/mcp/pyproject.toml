@@ -1,0 +1,159 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ---------------------------------------------------------------------------
+# Project metadata
+# ---------------------------------------------------------------------------
+[project]
+name = "wfm-mcp"
+version = "0.1.0"
+description = "WFM Data Assistant — MCP server (FastMCP, schema + query namespaces)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "frdeange" }]
+keywords = ["wfm", "mcp", "fastmcp", "sql-server"]
+classifiers = [
+    "Private :: Do Not Upload",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+
+# Runtime dependencies. Keep this list aligned with PLAN.md §6.3 / §8.
+#
+# Rule (mirrors apps/backend): only declare packages we ``import`` or
+# ``uvicorn`` directly. Packages pulled transitively by ``fastmcp`` are
+# intentionally NOT redeclared to keep the manifest honest — EXCEPT
+# when we already import the package directly (then we declare it
+# explicitly so the manifest matches the import graph and a transitive
+# drop doesn't silently break us).
+#
+#   - ``fastmcp``           → ``FastMCP``, ``Client``, the Streamable HTTP
+#                             transport via ``http_app()``. Pulls
+#                             ``fastmcp-slim[server,client]`` which in
+#                             turn brings ``mcp``, ``starlette``,
+#                             ``uvicorn``, ``pydantic``, ``rich``,
+#                             ``httpx`` and friends. Pinned to the exact
+#                             version called out in ``PLAN.md`` §6.3 so
+#                             dependency drift cannot silently change
+#                             tool registration semantics (``namespace``
+#                             vs deprecated ``prefix``, in-memory
+#                             ``Client`` shape).
+#   - ``pydantic-settings`` → ``app/settings.py`` subclasses
+#                             ``BaseSettings``. fastmcp-slim already
+#                             pulls it (``pydantic-settings>=2.0.0``)
+#                             but we redeclare to mirror backend's rule
+#                             (apps/backend/pyproject.toml:60-64,74) and
+#                             to survive future FastMCP dep-graph
+#                             changes.
+dependencies = [
+    "fastmcp==3.3.1",
+    "pydantic-settings>=2.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[project.urls]
+Repository = "https://github.com/frdeange/ParalelCalabrioMAFTest"
+Issues = "https://github.com/frdeange/ParalelCalabrioMAFTest/issues"
+
+# ---------------------------------------------------------------------------
+# Build configuration (hatchling)
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.hatch.build.targets.sdist]
+include = ["app", "tests", "README.md", "pyproject.toml", ".env.example"]
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# Force the local ``apps/mcp/`` directory to the front of sys.path so
+# the bare ``app`` package name resolves to this service even when the
+# dev container has ``apps/backend`` editable-installed alongside (both
+# wheels ship a top-level ``app/`` package). In production each
+# container ships only its own wheel, so there is no collision.
+pythonpath = ["."]
+asyncio_mode = "auto"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+filterwarnings = [
+    "error",
+    # FastMCP emits a deprecation warning for the legacy ``prefix=`` kwarg
+    # on ``mount(...)``. We do NOT use it (we pass ``namespace=``), but
+    # downstream libs may; keep the warning visible only as a warning.
+    "ignore:.*The 'prefix' parameter is deprecated.*:DeprecationWarning",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "W",   # pycodestyle warnings
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "C4",  # flake8-comprehensions
+]
+ignore = [
+    "E501", # line length handled by formatter
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+
+[[tool.mypy.overrides]]
+module = ["fastmcp.*", "mcp.*"]
+ignore_missing_imports = true
