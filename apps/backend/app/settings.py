@@ -80,6 +80,26 @@ class Settings(BaseSettings):
             "(e.g. https://<apim>/mcp-api-dev/mcp/)."
         ),
     )
+    mcp_tool_name: str = Field(
+        "wfm-data",
+        alias="MCP_TOOL_NAME",
+        description=(
+            "Display name of the MCP tool slot exposed to the workflow "
+            "agents. Surfaces in traces and in the function-tool name "
+            "the model sees; keep it short and stable."
+        ),
+    )
+    mcp_tool_prefix: str = Field(
+        "",
+        alias="MCP_TOOL_PREFIX",
+        description=(
+            "Optional prefix added in front of every tool name advertised "
+            "by the MCP server. Empty (default) keeps upstream names "
+            "(``listTables``, ``getSchema``, ``executeQuery``). Use a "
+            "namespace like ``wfm_`` if a future workflow needs to mount "
+            "more than one MCP server on the same agent."
+        ),
+    )
 
     # ------------------------------------------------------------------
     # Cosmos DB (conversation history)
