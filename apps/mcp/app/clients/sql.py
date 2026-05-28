@@ -101,6 +101,33 @@ _FORBIDDEN_CONN_STR_CLAUSES = re.compile(
     r"(?i)\b(authentication|uid|user\s*id|pwd|password|trusted_connection)\s*="
 )
 
+# Characters that have no business in a SQL Server hostname, database
+# name or ODBC driver name. Any of them in an input would let a
+# misconfiguration smuggle a second clause into the ODBC connection
+# string (e.g. ``server="x.db;UID=evil;PWD=..."``). Validating at the
+# boundary makes :meth:`SqlDatabaseClient._strip_password_clauses`
+# pure defence in depth rather than the primary guard.
+_UNSAFE_ODBC_CHARS = re.compile(r"[;={}\"'\x00\r\n\t]")
+
+
+def _reject_unsafe_identifier(field_name: str, value: str) -> None:
+    """Raise ``ValueError`` if ``value`` contains an ODBC delimiter.
+
+    Applied to ``server`` / ``database`` / ``driver`` before they get
+    interpolated into the connection string. Catches
+    ``MCP_AZURE_SQL_SERVER="x.db;Authentication=...;UID=evil"`` style
+    attacks at the *input* boundary, complementing the
+    :meth:`SqlDatabaseClient._strip_password_clauses` sanitizer that
+    runs on the *output*.
+    """
+    match = _UNSAFE_ODBC_CHARS.search(value)
+    if match is not None:
+        raise ValueError(
+            f"SqlDatabaseClient: {field_name!r} contains forbidden character "
+            f"{match.group()!r}. Hostnames, database names and ODBC driver "
+            "names must not contain any of: ; = { } \" ' or control chars."
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class QueryResult:
@@ -148,7 +175,10 @@ class SqlDatabaseClient:
     Raises
     ------
     ValueError
-        If ``server`` or ``database`` is empty / whitespace.
+        If ``server`` or ``database`` is empty / whitespace, or if any
+        of ``server`` / ``database`` / ``driver`` contains an ODBC
+        delimiter (``;``, ``=``, ``{``, ``}``, quotes or control
+        characters).
     """
 
     def __init__(
@@ -171,6 +201,9 @@ class SqlDatabaseClient:
                 "SqlDatabaseClient: 'database' is required. Set MCP_AZURE_SQL_DATABASE "
                 "in the environment (PLAN.md §14)."
             )
+        _reject_unsafe_identifier("server", server)
+        _reject_unsafe_identifier("database", database)
+        _reject_unsafe_identifier("driver", driver)
 
         self._server = server
         self._database = database
@@ -391,9 +424,7 @@ class SqlDatabaseClient:
         truncated = len(raw_rows) > max_rows
         if truncated:
             raw_rows = raw_rows[:max_rows]
-            logger.warning(
-                "SqlDatabaseClient.execute truncated result to %d rows", max_rows
-            )
+            logger.warning("SqlDatabaseClient.execute truncated result to %d rows", max_rows)
 
         rows: list[dict[str, Any]] = [dict(zip(columns, row, strict=True)) for row in raw_rows]
         return QueryResult(rows=rows, truncated=truncated)

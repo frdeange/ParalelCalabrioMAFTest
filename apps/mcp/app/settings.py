@@ -6,7 +6,17 @@ the issue that introduced it so the manifest stays traceable.
 
 from __future__ import annotations
 
+import re
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Mirrors ``app.clients.sql._UNSAFE_ODBC_CHARS``. Defined here too so
+# misconfiguration fails the process *boot*, not the first query: e.g.
+# ``MCP_AZURE_SQL_SERVER="x.db;UID=evil;PWD=..."`` must never be
+# accepted as a Settings value, because the value is later interpolated
+# verbatim into the ODBC connection string.
+_UNSAFE_ODBC_CHARS = re.compile(r"[;={}\"'\x00\r\n\t]")
 
 
 class Settings(BaseSettings):
@@ -72,6 +82,31 @@ class Settings(BaseSettings):
     # honours ``AZURE_CLIENT_SECRET`` — a password by another name) and
     # interactive browser flows; we explicitly forbid both.
     environment: str = "local"
+
+    @field_validator("azure_sql_server", "azure_sql_database")
+    @classmethod
+    def _reject_odbc_delimiters(cls, value: str | None) -> str | None:
+        """Block ODBC-injection vectors at the config boundary.
+
+        ``server`` and ``database`` are interpolated verbatim into the
+        ODBC connection string built by
+        :class:`SqlDatabaseClient`. If either value contained a ``;``
+        or ``=``, a misconfiguration could smuggle an extra clause
+        (``UID=`` / ``PWD=`` / ``Authentication=``) and break the
+        Entra-only invariant fixed in issue #17. Reject the whole
+        configuration here rather than relying on the downstream
+        sanitizer to clean it up.
+        """
+        if value is None:
+            return None
+        match = _UNSAFE_ODBC_CHARS.search(value)
+        if match is not None:
+            raise ValueError(
+                f"contains forbidden character {match.group()!r}; hostnames "
+                "and database names must not contain any of: ; = { } \" ' or "
+                "control chars."
+            )
+        return value
 
 
 def get_settings() -> Settings:

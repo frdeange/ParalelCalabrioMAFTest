@@ -171,6 +171,63 @@ def test_managed_identity_client_id_empty_passes_none() -> None:
 
 
 # ---------------------------------------------------------------------------
+# ODBC-injection guard — reject delimiters in server / database / driver
+# ---------------------------------------------------------------------------
+
+
+_UNSAFE_INPUTS = [
+    "srv;UID=evil",
+    "srv;Authentication=ActiveDirectoryPassword",
+    "srv=evil",
+    "srv{evil}",
+    "srv}evil",
+    'srv"evil',
+    "srv'evil",
+    "srv\nUID=evil",
+    "srv\rPWD=evil",
+    "srv\tUID=evil",
+    "srv\x00",
+]
+
+
+@pytest.mark.parametrize("bad", _UNSAFE_INPUTS)
+def test_unsafe_server_rejected(bad: str) -> None:
+    """``server`` is interpolated raw into the ODBC connection string.
+
+    Any ODBC delimiter in the input would let a malicious /
+    misconfigured value smuggle a second clause
+    (``Authentication=``, ``UID=``, …) and break the Entra-only
+    invariant fixed in issue #17. The boundary guard must reject the
+    whole client construction.
+    """
+    with pytest.raises(ValueError, match="forbidden character"):
+        SqlDatabaseClient(server=bad, database="wfm", credential=MagicMock())
+
+
+@pytest.mark.parametrize("bad", _UNSAFE_INPUTS)
+def test_unsafe_database_rejected(bad: str) -> None:
+    """Same as ``server`` — ``database`` is also interpolated raw."""
+    with pytest.raises(ValueError, match="forbidden character"):
+        SqlDatabaseClient(server="srv", database=bad, credential=MagicMock())
+
+
+@pytest.mark.parametrize("bad", _UNSAFE_INPUTS)
+def test_unsafe_driver_rejected(bad: str) -> None:
+    """``driver`` is interpolated inside ``Driver={...}`` braces.
+
+    A delimiter here could close the braces early and start a new
+    clause; reject for the same reason as ``server`` / ``database``.
+    """
+    with pytest.raises(ValueError, match="forbidden character"):
+        SqlDatabaseClient(
+            server="srv",
+            database="wfm",
+            driver=bad,
+            credential=MagicMock(),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Connection string — security guardrail
 # ---------------------------------------------------------------------------
 
@@ -222,9 +279,7 @@ def test_strip_password_clauses_removes_smuggled_clauses(smuggled: str) -> None:
     )
     cleaned = SqlDatabaseClient._strip_password_clauses(tainted).lower()
     bad_key = smuggled.split("=", 1)[0].strip().lower()
-    assert bad_key not in cleaned, (
-        f"sanitizer failed to remove {smuggled!r} from connection string"
-    )
+    assert bad_key not in cleaned, f"sanitizer failed to remove {smuggled!r} from connection string"
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +306,7 @@ async def test_token_is_packed_with_length_prefix() -> None:
 
     expected_bytes = "hello-token".encode("utf-16-le")
     # Length prefix: 4 bytes little-endian == len(expected_bytes).
-    length, = struct.unpack("=i", packed[:4])
+    (length,) = struct.unpack("=i", packed[:4])
     assert length == len(expected_bytes)
     assert packed[4:] == expected_bytes
 
