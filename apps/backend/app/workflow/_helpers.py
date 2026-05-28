@@ -84,11 +84,12 @@ def build_messages(system_text: str, user_text: str) -> list[Message]:
 def windowed_history(history: list[Message], turns: int) -> list[Message]:
     """Return the trailing slice of *history* the intent classifier should see.
 
-    The algorithm walks *history* from the end backwards and stops once it
-    has crossed (``turns`` + 1) user messages — i.e. the latest user turn
-    plus *turns* prior user turns. Everything visited along the way
-    (including assistant messages that sit between those user turns) is
-    kept and returned in original order.
+    The algorithm walks *history* from the end backwards and stops once
+    it has seen ``turns`` user messages — i.e. the latest user turn plus
+    ``turns - 1`` prior user turns, for ``turns`` user messages in total.
+    Everything visited along the way (including assistant messages that
+    sit between those user turns) is kept and returned in original
+    order.
 
     Notes / edge cases:
 
@@ -109,8 +110,10 @@ def windowed_history(history: list[Message], turns: int) -> list[Message]:
                 return [history[i]]
         return list(history)
 
-    # Walk back, counting user messages until we've collected ``turns + 1``
-    # of them (turns prior + the latest one).
+    # Walk back, counting user messages. We keep up to ``turns`` user
+    # messages in total (the latest plus ``turns - 1`` prior turns);
+    # the (``turns`` + 1)-th user message marks the cutoff and is
+    # discarded so the window starts cleanly on a user turn.
     kept: list[Message] = []
     user_count = 0
     for m in reversed(history):

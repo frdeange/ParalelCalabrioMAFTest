@@ -6,29 +6,44 @@
 
 ## Status
 
-**Phase 1 — in progress.** Package scaffold and typed settings are live; the
-FastAPI app, MAF workflow and the remaining modules land in subsequent
-Phase 1 issues (see milestone [Phase 1 — Backend](https://github.com/frdeange/ParalelCalabrioMAFTest/milestone/2)).
+**Phase 1 — feature-complete.** Package scaffold, typed settings, the
+three-step MAF workflow, the MCP tool factory, the history provider
+abstraction, the FastAPI app + AG-UI endpoint, the HMAC identity
+dependency, the multi-stage Dockerfile and the pytest+coverage CI
+gate are all in place (see milestone [Phase 1 — Backend](https://github.com/frdeange/ParalelCalabrioMAFTest/milestone/2)).
 
 ## Structure
 
 ```
 app/
-├── __init__.py    ✅ done
-├── settings.py    ✅ done — pydantic-settings (PLAN.md §14)
-├── workflow/      ✅ done — 3-step MAF workflow (#8)
-├── main.py        ⏳ FastAPI app + ag-ui endpoint (#12)
-├── identity.py    ⏳ FastAPI dep: parse x-user-* + verify HMAC (#13)
-├── history.py     ⏳ CosmosHistoryProvider wrapper (#10)
-└── tools.py       ⏳ MCPStreamableHTTPTool factory (#11)
-tests/
-├── conftest.py    ✅ shared fixtures (required_env)
-├── test_settings.py ✅
-└── test_workflow_*.py ✅ (#8)
-pyproject.toml     ✅
-.env.example       ✅
-Dockerfile         ✅ (#15)
-.dockerignore      ✅ (#15)
+├── __init__.py        ✅
+├── settings.py        ✅ pydantic-settings (PLAN.md §14)
+├── main.py            ✅ FastAPI app factory + /healthz (#12)
+├── lifespan.py        ✅ production lifespan (telemetry, MCP, AG-UI mount) (#12)
+├── deps/
+│   └── identity.py    ✅ verify x-user-* + HMAC → Caller (#13)
+├── history/
+│   ├── protocol.py    ✅ HistoryProvider Protocol (#10)
+│   ├── memory.py      ✅ InMemoryHistoryProvider (dev/tests)
+│   ├── cosmos.py      ✅ CosmosHistoryProvider wrapper (prod)
+│   └── factory.py     ✅ provider selection by settings
+├── mcp/
+│   └── factory.py     ✅ MCPStreamableHTTPTool factory (#11)
+├── security/
+│   └── hmac.py        ✅ canonical payload + HMAC compute/verify (#13)
+└── workflow/          ✅ 3-step MAF workflow (#8)
+    ├── build.py       ✅ SequentialBuilder assembly
+    ├── intent.py      ✅ IntentStep
+    ├── sql_builder.py ✅ SqlBuilderStep
+    ├── query_executor.py ✅ QueryExecutorStep
+    ├── schemas.py     ✅ IntentBundle / SqlBundle / IntentResult / SqlPlan
+    ├── prompts.py     ✅ prompt templates
+    └── _helpers.py    ✅ templating, usage tracking, history windowing
+tests/                 ✅ 108 tests, 94% coverage (#14)
+pyproject.toml         ✅
+.env.example           ✅
+Dockerfile             ✅ (#15)
+.dockerignore          ✅ (#15)
 ```
 
 ## Quickstart (local)
@@ -37,15 +52,15 @@ Dockerfile         ✅ (#15)
 cd apps/backend
 pip install -e ".[dev]"
 cp .env.example .env          # fill in the blanks
-pytest                        # workflow + settings tests pass
+pytest                        # 108 tests — settings, workflow, MCP, history, HMAC, identity, AG-UI
 ruff check .                  # lint
-```
-
-Once the FastAPI app lands (#12):
-
-```bash
 uvicorn app.main:app --reload --port 8000
 ```
+
+`uvicorn app.main:app` requires the env vars listed in [`.env.example`](.env.example).
+The production lifespan opens a real `DefaultAzureCredential` and two
+MCP sessions on startup, so for fully isolated runs use the testsuite
+(`pytest`) which mocks those out.
 
 ## Docker
 
@@ -78,13 +93,10 @@ docker run --rm -p 8000:8000 \
 
 The container listens on `0.0.0.0:8000` and exposes the FastAPI app via
 `gunicorn --worker-class uvicorn.workers.UvicornWorker app.main:app`.
-
-> ⚠️ The Dockerfile points at `app.main:app`, which is added in issue **#12**
-> (FastAPI app + AG-UI endpoint). Until #12 merges, the container builds
-> successfully but the gunicorn process will exit with a `ModuleNotFoundError`
-> on startup — that failure is the intended signal that the runtime piece
-> is not yet wired. The build itself, the image size, and the non-root user
-> contract (the actual acceptance criteria of #15) are unaffected.
+It expects every variable listed in [PLAN.md §14](../../PLAN.md#14-environment-variables-inventory)
+(Foundry endpoint, MCP URL, Cosmos endpoint, App Insights connection
+string, HMAC shared secret); the lifespan crashes fast on startup if a
+required one is missing.
 
 ### Tunables (env vars consumed by the entrypoint)
 
@@ -116,7 +128,8 @@ docker run --rm backend python -c "from app.workflow import build_workflow; prin
 ```
 
 This bypasses the FastAPI entrypoint and exercises only the package
-import path; it works on the bare #15 image without #12 having landed.
+import path — handy to verify the image is sane without supplying the
+full env var set required by the real lifespan.
 
 ## Environment variables
 
