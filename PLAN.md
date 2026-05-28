@@ -641,7 +641,7 @@ Refactor [main_local_multiturn.py](main_local_multiturn.py ) into `apps/backend/
 ### Phase 2 — MCP
 Greenfield MCP server:
 - FastMCP server with `mount(prefix=...)`
-- `SqlDatabaseClient` (Entra-auth + KV fallback)
+- `SqlDatabaseClient` (Entra-auth **only** via `DefaultAzureCredential` — SQL passwords are explicitly forbidden, see #17)
 - 5 tools (`schema.list/search/describe/get_distinct_values`, `query.execute`)
 - `sqlglot` validator
 - Bootstrap scripts for `_metadata` + seed `extended_properties`
@@ -705,15 +705,24 @@ LOG_LEVEL=INFO
 
 ### MCP (`apps/mcp/.env.example`)
 ```
-AZURE_SQL_SERVER=calabriomafpoc-sql.database.windows.net
-AZURE_SQL_DATABASE=calabriowfm
-SQL_AUTH_MODE=entra
-SQL_USERNAME=
-KEYVAULT_URI=https://calabriomafpoc-kv.vault.azure.net/
-HMAC_SHARED_SECRET=
-APPLICATIONINSIGHTS_CONNECTION_STRING=
-OTEL_SERVICE_NAME=wfm-mcp
-LOG_LEVEL=INFO
+# Streamable HTTP transport (scaffold, #16)
+MCP_PATH=/mcp/
+MCP_STATELESS=true
+MCP_LOG_LEVEL=INFO
+
+# Azure SQL connection. Entra-only auth via DefaultAzureCredential —
+# SQL passwords are explicitly forbidden; there is no fallback to KV.
+MCP_AZURE_SQL_SERVER=calabriomafpoc-sql.database.windows.net
+MCP_AZURE_SQL_DATABASE=calabriowfm
+
+# Key Vault is consumed **only** for the HMAC shared secret used by
+# APIM ↔ MCP (#47). It is NOT used for any SQL-related secret.
+MCP_KEYVAULT_URI=https://calabriomafpoc-kv.vault.azure.net/
+MCP_HMAC_SHARED_SECRET=
+
+# Observability
+MCP_APPLICATIONINSIGHTS_CONNECTION_STRING=
+MCP_OTEL_SERVICE_NAME=wfm-mcp
 ```
 
 ### Frontend (`apps/frontend/.env.local.example`)

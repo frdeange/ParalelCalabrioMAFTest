@@ -13,6 +13,10 @@ def test_defaults_match_env_example() -> None:
     assert s.path == "/mcp/"
     assert s.stateless is True
     assert s.log_level == "INFO"
+    # SQL fields are optional at the Settings layer (validated by
+    # ``SqlDatabaseClient.__init__`` when it actually needs them).
+    assert s.azure_sql_server is None
+    assert s.azure_sql_database is None
 
 
 def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -20,11 +24,15 @@ def test_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_PATH", "/custom/")
     monkeypatch.setenv("MCP_STATELESS", "false")
     monkeypatch.setenv("MCP_LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("MCP_AZURE_SQL_SERVER", "foo.database.windows.net")
+    monkeypatch.setenv("MCP_AZURE_SQL_DATABASE", "wfm")
 
     s = Settings()  # bypass get_settings to make the override path explicit
     assert s.path == "/custom/"
     assert s.stateless is False
     assert s.log_level == "DEBUG"
+    assert s.azure_sql_server == "foo.database.windows.net"
+    assert s.azure_sql_database == "wfm"
 
 
 def test_extra_env_vars_are_ignored(monkeypatch: pytest.MonkeyPatch) -> None:

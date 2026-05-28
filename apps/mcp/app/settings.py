@@ -1,8 +1,7 @@
 """Typed runtime configuration for the MCP server.
 
-Only the knobs needed for the **scaffold** (issue #16) are exposed.
-Subsequent issues (#17 SqlDatabaseClient, #18-#20 tools, #19 validator)
-extend this module with database / KV / HMAC settings.
+Knobs are added per Phase 2 issue. Each field documents its purpose and
+the issue that introduced it so the manifest stays traceable.
 """
 
 from __future__ import annotations
@@ -26,6 +25,9 @@ class Settings(BaseSettings):
         frozen=True,
     )
 
+    # ------------------------------------------------------------------
+    # Streamable HTTP transport (issue #16 scaffold)
+    # ------------------------------------------------------------------
     # Path the Streamable HTTP transport listens on. Backend's
     # ``MCPStreamableHTTPTool`` consumers concatenate this with the base
     # URL. Default mirrors the spec example so a fresh checkout boots
@@ -39,6 +41,21 @@ class Settings(BaseSettings):
 
     # Log level forwarded to uvicorn / FastMCP.
     log_level: str = "INFO"
+
+    # ------------------------------------------------------------------
+    # Azure SQL connection (issue #17 SqlDatabaseClient)
+    # ------------------------------------------------------------------
+    # Authentication is **Entra only** via ``DefaultAzureCredential``
+    # (see ``app/clients/sql.py``). SQL passwords are forbidden by
+    # policy; there is no username / KV-secret fallback. Key Vault is
+    # consumed only for the HMAC shared secret (#47).
+    #
+    # Optional at the Settings layer so the FastMCP scaffold and unit
+    # tests for unrelated modules keep working without these vars set.
+    # ``SqlDatabaseClient.__init__`` validates that both are present
+    # before opening any connection.
+    azure_sql_server: str | None = None
+    azure_sql_database: str | None = None
 
 
 def get_settings() -> Settings:
