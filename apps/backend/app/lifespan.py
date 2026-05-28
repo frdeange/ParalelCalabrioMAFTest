@@ -146,6 +146,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         history_provider = get_history_provider(
             settings, credential=credential
         )
+        # ``HistoryProvider`` Protocol intentionally omits ``close`` (see
+        # ``app/history/protocol.py``) because it's a Cosmos/in-memory
+        # implementation detail, not part of the request-time contract.
+        # Both concrete providers expose ``async def close()`` for
+        # connection cleanup, so we register it via ``getattr`` to keep
+        # the Protocol narrow while still preventing resource leaks on
+        # shutdown.
+        if (close := getattr(history_provider, "close", None)) is not None:
+            stack.push_async_callback(close)
 
         intent_agent = Agent(
             client=chat_client,
