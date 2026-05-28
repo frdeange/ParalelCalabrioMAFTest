@@ -340,7 +340,7 @@ WorkflowBuilder()
 | Namespace | Tool | Description |
 |-----------|------|-------------|
 | `schema` | `list_tables` | Lists tables/views visible to this BU (filtered by `_metadata.catalog_tables.is_active`). |
-| `schema` | `search_tables` | Keyword search across `_metadata.catalog_tables.name + description + keywords`. |
+| `schema` | `search_tables` | Keyword search across `_metadata.catalog_tables.table_name + description + keywords`. |
 | `schema` | `describe_table` | Returns columns, types, descriptions, declared joins — sourced from `_metadata.catalog_columns` + `_metadata.catalog_joins`. |
 | `schema` | `get_distinct_values` | For small categorical columns — returns unique values. |
 | `query` | `execute` | Runs a validated SELECT with `bu_id` injected, returns rows + metadata. |

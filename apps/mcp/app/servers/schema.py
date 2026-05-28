@@ -126,7 +126,14 @@ def _require_nonempty_string(name: str, value: object) -> str:
 
 
 def _require_positive_int(name: str, value: int, max_value: int) -> int:
-    """Clamp ``value`` to the closed interval ``[1, max_value]`` or raise."""
+    """Return ``value`` after asserting it lies in ``[1, max_value]``.
+
+    Raises :class:`ValueError` if ``value`` is not a real ``int`` or is
+    outside the allowed range. We **reject** rather than silently clamp
+    so the agent does not get back a different result than the one it
+    asked for — a request for ``top_n=10_000`` should fail loudly, not
+    quietly return ``1000``.
+    """
     # ``bool`` is a subclass of ``int``; reject it explicitly so True/False
     # cannot be passed where a real count is expected.
     if not isinstance(value, int) or isinstance(value, bool):
@@ -203,7 +210,8 @@ async def search_tables(query: str, top_k: int = 10) -> dict[str, Any]:
         ``"absence requests"``). Whitespace is trimmed; empty input is
         rejected.
     top_k:
-        Max rows to return. Clamped to ``[1, 50]``.
+        Max rows to return. Must be in ``[1, 50]`` — out-of-range
+        values raise ``ValueError`` rather than being silently capped.
 
     Returns
     -------
@@ -339,7 +347,8 @@ async def get_distinct_values(
     column_name:
         Column on that table.
     top_n:
-        Max rows to return. Clamped to ``[1, 1000]``.
+        Max rows to return. Must be in ``[1, 1000]`` — out-of-range
+        values raise ``ValueError`` rather than being silently capped.
 
     Returns
     -------
