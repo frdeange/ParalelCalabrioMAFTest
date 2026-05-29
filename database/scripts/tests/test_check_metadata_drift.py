@@ -658,3 +658,216 @@ def test_format_summary_truncates_long_lists() -> None:
     }
     out = cmd._format_summary(report)
     assert "and 5 more" in out
+
+
+# ---------------------------------------------------------------------------
+# include_schemas filter (issue #22)
+# ---------------------------------------------------------------------------
+
+
+def test_schema_of_returns_prefix_when_dotted() -> None:
+    """``schema.table`` \u2192 ``schema``; the partition strips the rest."""
+    assert cmd._schema_of("analytics.vw_PersonDetail") == "analytics"
+    assert cmd._schema_of("_metadata.catalog_columns") == "_metadata"
+
+
+def test_schema_of_returns_empty_when_no_dot() -> None:
+    """No dot \u2192 empty string; such rows never match an include-list filter,
+    which is the intentional safe default."""
+    assert cmd._schema_of("nodot") == ""
+    assert cmd._schema_of("") == ""
+
+
+def test_compute_drift_include_schemas_filters_both_sides() -> None:
+    """``include_schemas`` must drop DB **and** catalog rows outside the scope.
+
+    Without the filter the ``wfm.agent`` base table would surface as
+    ``missing_from_catalog`` (because the catalog deliberately covers
+    only ``analytics.*`` views). Scoped to ``analytics``, the same
+    inputs produce a clean report.
+    """
+    db_tables = [
+        cmd._DbTable(schema_name="analytics", table_name="analytics.vw_PersonDetail"),
+        cmd._DbTable(schema_name="wfm", table_name="wfm.agent"),
+    ]
+    db_columns = [
+        cmd._DbColumn(
+            table_name="analytics.vw_PersonDetail",
+            column_name="agent_id",
+            data_type="INT",
+            is_nullable=False,
+        ),
+        cmd._DbColumn(
+            table_name="wfm.agent",
+            column_name="agent_id",
+            data_type="INT",
+            is_nullable=False,
+        ),
+    ]
+    catalog_tables = [
+        cmd._CatalogTable(
+            table_name="analytics.vw_PersonDetail",
+            schema_name="analytics",
+            is_active=True,
+        ),
+    ]
+    catalog_columns = [
+        cmd._CatalogColumn(
+            table_name="analytics.vw_PersonDetail",
+            column_name="agent_id",
+            data_type="INT",
+        ),
+    ]
+
+    # Default (no filter) \u2192 wfm.agent is drift.
+    unfiltered = cmd.compute_drift(
+        db_tables, db_columns, catalog_tables, catalog_columns, now=FROZEN_NOW
+    )
+    assert unfiltered["ok"] is False
+    assert any(
+        t["table_name"] == "wfm.agent"
+        for t in unfiltered["missing_from_catalog"]["tables"]
+    )
+
+    # Scoped to analytics \u2192 wfm.agent disappears from both sides.
+    scoped = cmd.compute_drift(
+        db_tables,
+        db_columns,
+        catalog_tables,
+        catalog_columns,
+        now=FROZEN_NOW,
+        include_schemas=frozenset({"analytics"}),
+    )
+    assert scoped["ok"] is True
+    assert scoped["missing_from_catalog"]["tables"] == []
+    assert scoped["missing_from_catalog"]["columns"] == []
+
+
+def test_compute_drift_include_schemas_filters_catalog_orphans_too() -> None:
+    """A catalog row whose schema is **outside** the scope is dropped.
+
+    Otherwise scoping would create false ``missing_from_database``
+    entries for catalog rows the operator explicitly took out of
+    scope.
+    """
+    catalog_tables = [
+        cmd._CatalogTable(
+            table_name="ignored.vw_outside_scope",
+            schema_name="ignored",
+            is_active=True,
+        ),
+    ]
+    report = cmd.compute_drift(
+        [],
+        [],
+        catalog_tables,
+        [],
+        now=FROZEN_NOW,
+        include_schemas=frozenset({"analytics"}),
+    )
+    assert report["ok"] is True
+    assert report["missing_from_database"]["tables"] == []
+
+
+def test_main_include_schema_cli_flag_filters_report(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--include-schema analytics`` plumbs through to ``compute_drift``."""
+    cursor = _make_cursor(
+        db_tables=[("analytics", "vw_x"), ("wfm", "agent")],
+    )
+    _patch_main_dependencies(monkeypatch, cursor)
+
+    code = cmd.main(["--include-schema", "analytics"])
+    payload = json.loads(capsys.readouterr().out)
+
+    # ``wfm.agent`` would normally appear in missing_from_catalog;
+    # scoping to analytics removes it, but ``analytics.vw_x`` remains
+    # (no catalog row exists for it in the fake response).
+    tables = payload["missing_from_catalog"]["tables"]
+    assert {t["table_name"] for t in tables} == {"analytics.vw_x"}
+    # Exit code reflects the still-present drift on the in-scope row.
+    assert code == 1
+
+
+def test_main_include_schema_env_var_filters_report(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``DRIFT_CHECK_INCLUDE_SCHEMAS`` (comma-separated) is the CI seam."""
+    cursor = _make_cursor(
+        db_tables=[("analytics", "vw_x"), ("wfm", "agent")],
+    )
+    _patch_main_dependencies(monkeypatch, cursor)
+    monkeypatch.setenv("DRIFT_CHECK_INCLUDE_SCHEMAS", "analytics, _metadata")
+
+    code = cmd.main([])
+    payload = json.loads(capsys.readouterr().out)
+
+    tables = payload["missing_from_catalog"]["tables"]
+    assert {t["table_name"] for t in tables} == {"analytics.vw_x"}
+    assert code == 1
+
+
+def test_main_include_schema_cli_wins_over_env(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CLI ``--include-schema`` takes precedence over the env var.
+
+    Otherwise an operator overriding the CI default on the command
+    line would silently get the env var's value layered in.
+    """
+    cursor = _make_cursor(
+        db_tables=[("analytics", "vw_x"), ("wfm", "agent")],
+    )
+    _patch_main_dependencies(monkeypatch, cursor)
+    # Env points at wfm, CLI points at analytics \u2192 only analytics
+    # should be considered.
+    monkeypatch.setenv("DRIFT_CHECK_INCLUDE_SCHEMAS", "wfm")
+
+    cmd.main(["--include-schema", "analytics"])
+    payload = json.loads(capsys.readouterr().out)
+
+    tables = payload["missing_from_catalog"]["tables"]
+    assert {t["table_name"] for t in tables} == {"analytics.vw_x"}
+
+
+@pytest.mark.parametrize(
+    "argv, env_val",
+    [
+        # Operator typo: explicit empty flag.
+        (["--include-schema", ""], None),
+        # CI typo: env var with only separators / whitespace.
+        ([], ","),
+        ([], " , "),
+    ],
+)
+def test_main_empty_include_schema_falls_back_to_unscoped(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    env_val: str | None,
+) -> None:
+    """Empty scope values must not silently disable the drift check.
+
+    An empty ``frozenset()`` passed to ``compute_drift`` filters out
+    every table/column and yields a clean report \u2014 turning a
+    misconfigured CLI/env value into a green build. The CLI must
+    treat that case as \"unscoped\" (i.e. ``None``) so the gate keeps
+    failing on real drift.
+    """
+    cursor = _make_cursor(
+        db_tables=[("analytics", "vw_x"), ("wfm", "agent")],
+    )
+    _patch_main_dependencies(monkeypatch, cursor)
+    if env_val is not None:
+        monkeypatch.setenv("DRIFT_CHECK_INCLUDE_SCHEMAS", env_val)
+
+    code = cmd.main(argv)
+    payload = json.loads(capsys.readouterr().out)
+
+    # Unscoped: both ``analytics.vw_x`` and ``wfm.agent`` surface as
+    # missing_from_catalog (no catalog rows in this fixture).
+    tables = {t["table_name"] for t in payload["missing_from_catalog"]["tables"]}
+    assert tables == {"analytics.vw_x", "wfm.agent"}
+    assert code == 1
+
