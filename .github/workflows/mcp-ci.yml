@@ -56,6 +56,9 @@ jobs:
       - name: Test
         run: pytest -v --cov=app --cov-report=term-missing
 
+      - name: Tool catalog drift check
+        run: python scripts/gen_tool_catalog.py --check
+
       # Opt-in integration suite (issue #23). Spins up an mssql
       # testcontainer, bootstraps ``database/01-03*.sql`` and exercises
       # the schema + query tools end-to-end. Kept in the same job (not
