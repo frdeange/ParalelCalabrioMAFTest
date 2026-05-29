@@ -148,6 +148,32 @@ async def test_get_allowlist_fetches_from_catalog_on_first_call() -> None:
     sql = _executed_args(mock_client)[0]
     assert "_metadata.catalog_tables" in sql
     assert "is_active = 1" in sql
+    # An explicit high ``max_rows`` must be passed so the fetch never
+    # inherits ``SqlDatabaseClient``'s 1000-row default and silently
+    # truncates the allowlist (PR #71 review).
+    kwargs = _executed_kwargs(mock_client)
+    assert kwargs["max_rows"] >= 10_000
+
+
+@pytest.mark.asyncio
+async def test_get_allowlist_raises_when_catalog_fetch_truncates() -> None:
+    """A truncated catalog read must fail loudly, not yield a partial allowlist.
+
+    Otherwise ``query.execute`` would silently reject valid tables
+    that fell off the truncated tail — the failure mode the PR #71
+    review flagged.
+    """
+    # ``truncated=True`` simulates the catalog growing past
+    # ``_ALLOWLIST_FETCH_MAX_ROWS``.
+    catalog_rows = QueryResult(
+        rows=[{"table_name": "analytics.vw_PersonDetail"}],
+        truncated=True,
+    )
+    mock_client = _make_mock_client(catalog_rows)
+    set_sql_client(mock_client)
+
+    with pytest.raises(RuntimeError, match="partial"):
+        await get_allowlist()
 
 
 @pytest.mark.asyncio
@@ -398,13 +424,19 @@ async def test_execute_logs_telemetry_on_success(caplog: pytest.LogCaptureFixtur
 async def test_execute_logs_telemetry_on_rejection(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Rejected queries also emit telemetry, with ``outcome=rejected``."""
+    """Rejected queries emit telemetry with the **same shape** as success.
+
+    The rejection log line carries ``row_count=0``, ``truncated=False``,
+    ``tables=[]``, ``max_rows`` and a measured ``duration_ms`` so
+    downstream pipelines can flatten both outcomes onto a single
+    schema (PR #71 review).
+    """
     set_allowlist(frozenset({"analytics.vw_PersonDetail"}))
     set_sql_client(_make_mock_client())
 
     caplog.set_level(logging.INFO, logger="app.servers.query")
     with pytest.raises(ValueError):
-        await execute("DELETE FROM analytics.vw_PersonDetail")
+        await execute("DELETE FROM analytics.vw_PersonDetail", max_rows=42)
 
     telemetry_records = [
         r for r in caplog.records if getattr(r, "telemetry", None) == "query_execute"
@@ -419,6 +451,13 @@ async def test_execute_logs_telemetry_on_rejection(
         b"DELETE FROM analytics.vw_PersonDetail"
     ).hexdigest()[:16]
     assert record.sql_hash == expected_hash  # type: ignore[attr-defined]
+    # Symmetric shape with the success path — zero-valued mirrors.
+    assert record.row_count == 0  # type: ignore[attr-defined]
+    assert record.truncated is False  # type: ignore[attr-defined]
+    assert record.tables == []  # type: ignore[attr-defined]
+    assert record.max_rows == 42  # type: ignore[attr-defined]
+    assert isinstance(record.duration_ms, int)  # type: ignore[attr-defined]
+    assert record.duration_ms >= 0  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

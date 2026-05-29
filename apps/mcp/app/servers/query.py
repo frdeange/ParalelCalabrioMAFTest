@@ -57,6 +57,15 @@ query_server: FastMCP = FastMCP(name="calabrio-mcp-query")
 _sql_client: SqlDatabaseClient | None = None
 _allowlist_cache: frozenset[str] | None = None
 
+# Hard ceiling on the allowlist fetch. ``SqlDatabaseClient.execute``
+# defaults to ``max_rows=1000``, and silently truncating the catalog
+# read would yield a partial allowlist that rejects otherwise-valid
+# tables — a very confusing failure mode. We ask for a deliberately
+# high cap (100k rows is well above any plausible WFM catalog size)
+# and raise loudly if that ceiling is ever hit, forcing an explicit
+# decision (raise the cap, split the catalog, or fix the seed).
+_ALLOWLIST_FETCH_MAX_ROWS = 100_000
+
 
 def _build_sql_client() -> SqlDatabaseClient:
     """Construct a :class:`SqlDatabaseClient` from current settings.
@@ -113,11 +122,30 @@ async def _fetch_allowlist() -> frozenset[str]:
     (e.g. ``'analytics.vw_PersonDetail'``), so we read the column
     verbatim rather than concatenating ``schema_name + '.' + table_name``.
     Seed data is in ``database/03-seed-data.sql``.
+
+    Raises
+    ------
+    RuntimeError
+        If the catalog fetch is truncated by the row cap. A partial
+        allowlist would silently reject valid tables — fail loudly
+        instead so the operator either raises
+        ``_ALLOWLIST_FETCH_MAX_ROWS`` or splits the catalog.
     """
     client = get_sql_client()
+    # Pass ``max_rows`` explicitly so we do not inherit the client's
+    # 1000-row default. See ``_ALLOWLIST_FETCH_MAX_ROWS`` for why
+    # 100k is the ceiling.
     result = await client.execute(
-        "SELECT table_name FROM _metadata.catalog_tables WHERE is_active = 1"
+        "SELECT table_name FROM _metadata.catalog_tables WHERE is_active = 1",
+        max_rows=_ALLOWLIST_FETCH_MAX_ROWS,
     )
+    if result.truncated:
+        raise RuntimeError(
+            f"_metadata.catalog_tables returned more than "
+            f"{_ALLOWLIST_FETCH_MAX_ROWS} active rows; the allowlist would be "
+            "partial and silently reject valid tables. Raise "
+            "_ALLOWLIST_FETCH_MAX_ROWS in app/servers/query.py or split the catalog."
+        )
     return frozenset(row["table_name"] for row in result.rows)
 
 
@@ -246,9 +274,17 @@ async def execute(sql: str, max_rows: int | None = None) -> dict[str, Any]:
         max_rows = settings.query_max_rows_default
     max_rows = _require_max_rows(max_rows, settings.query_max_rows_cap)
 
+    # Wall-clock start: covers allowlist fetch (cache hit/miss),
+    # validator, and — on the happy path — the DB round-trip. Both
+    # the success *and* rejection telemetry log lines carry the
+    # resulting ``duration_ms`` so downstream pipelines see a uniform
+    # shape regardless of outcome.
+    started_at = time.perf_counter()
+
     allowlist = await get_allowlist()
     result = validate(sql, allowlist=allowlist)
     if not result.ok:
+        duration_ms = round((time.perf_counter() - started_at) * 1000)
         logger.info(
             "query.execute rejected by validator",
             extra={
@@ -256,6 +292,15 @@ async def execute(sql: str, max_rows: int | None = None) -> dict[str, Any]:
                 "outcome": "rejected",
                 "reason": result.reason,
                 "sql_hash": _sql_hash(sql),
+                # Zero-valued mirrors of the success-path fields so
+                # ingestion pipelines can flatten both outcomes onto
+                # the same schema. ``result.tables`` is ``()`` when
+                # ``ok`` is False (per ``ValidationResult`` docs).
+                "row_count": 0,
+                "truncated": False,
+                "duration_ms": duration_ms,
+                "max_rows": max_rows,
+                "tables": sorted(result.tables),
             },
         )
         raise ValueError(f"query rejected: {result.reason}")
@@ -266,7 +311,6 @@ async def execute(sql: str, max_rows: int | None = None) -> dict[str, Any]:
     assert result.normalized_sql is not None
     client = get_sql_client()
 
-    started_at = time.perf_counter()
     query_result: QueryResult = await client.execute(
         result.normalized_sql,
         max_rows=max_rows,
