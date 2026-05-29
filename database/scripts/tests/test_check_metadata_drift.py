@@ -580,6 +580,64 @@ def test_build_token_struct_round_trips() -> None:
     assert packed[4:] == token.encode("utf-16-le")
 
 
+# ---------------------------------------------------------------------------
+# ODBC-injection guard on the connection-string inputs.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "field, bad",
+    [
+        pytest.param("DB_SERVER", "srv;Authentication=ActiveDirectoryPassword", id="server-semi"),
+        pytest.param("DB_SERVER", "srv;UID=evil;PWD=...", id="server-uid-pwd"),
+        pytest.param("DB_SERVER", "srv=evil", id="server-equals"),
+        pytest.param("DB_SERVER", "srv{x}", id="server-braces"),
+        pytest.param("DB_SERVER", "srv\nfoo", id="server-newline"),
+        pytest.param("DB_DATABASE", "wfm;UID=evil", id="db-semi"),
+        pytest.param("DB_DATABASE", "wfm=evil", id="db-equals"),
+        pytest.param("DB_DATABASE", 'wfm"x', id="db-quote"),
+        pytest.param("driver", "ODBC;UID=evil", id="driver-semi"),
+    ],
+)
+def test_reject_unsafe_identifier_blocks_odbc_delimiters(field: str, bad: str) -> None:
+    """Mirrors ``apps/mcp/app/clients/sql._reject_unsafe_identifier``.
+
+    A connection-string-injection vector slipping in through
+    ``DB_SERVER`` / ``DB_DATABASE`` / a future ``DB_DRIVER`` knob must
+    be rejected at the input boundary so the script keeps the
+    Entra-only posture documented in issue #17.
+    """
+    with pytest.raises(ValueError, match="forbidden character"):
+        cmd._reject_unsafe_identifier(field, bad)
+
+
+def test_reject_unsafe_identifier_accepts_clean_values() -> None:
+    """Legitimate hostnames / database names pass through unchanged."""
+    cmd._reject_unsafe_identifier("DB_SERVER", "calabriomafpoc-sql.database.windows.net")
+    cmd._reject_unsafe_identifier("DB_DATABASE", "calabriowfm")
+    cmd._reject_unsafe_identifier("driver", "ODBC Driver 18 for SQL Server")
+
+
+# ---------------------------------------------------------------------------
+# CLI surface — defensive assertions on the parser shape.
+# ---------------------------------------------------------------------------
+
+
+def test_arg_parser_has_no_json_flag() -> None:
+    """The no-op ``--json`` flag was removed (review of PR #70).
+
+    JSON output is now the unconditional contract; documenting that
+    contract via a flag that could not be disabled was just inflating
+    the CLI surface.
+    """
+    parser = cmd._build_arg_parser()
+    flags = {action.option_strings[0] for action in parser._actions if action.option_strings}
+    assert "--json" not in flags
+    # ``--summary`` and ``--allow-drift`` are still expected.
+    assert {"--summary", "--allow-drift"}.issubset(flags)
+
+
+
 def test_normalize_type_strips_parens_and_lowercases() -> None:
     assert cmd._normalize_type("NVARCHAR(150)") == "nvarchar"
     assert cmd._normalize_type("DECIMAL(4,2)") == "decimal"

@@ -54,6 +54,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import struct
 import sys
 from collections.abc import Sequence
@@ -75,6 +76,33 @@ _AZURE_SQL_SCOPE = "https://database.windows.net/.default"
 
 # Default ODBC driver, matching the dev container + mcp-ci.yml install.
 _DEFAULT_DRIVER = "ODBC Driver 18 for SQL Server"
+
+# Characters that have no business in a SQL Server hostname, database
+# name or ODBC driver name. Mirrors ``_UNSAFE_ODBC_CHARS`` in
+# ``apps/mcp/app/clients/sql.py``. Any of them in an input would let a
+# misconfiguration smuggle a second clause into the connection string
+# (e.g. ``DB_SERVER="x.db;Authentication=ActiveDirectoryPassword;UID=evil;PWD=..."``)
+# and defeat the Entra-only invariant the script otherwise enforces.
+_UNSAFE_ODBC_CHARS = re.compile(r"[;={}\"'\x00\r\n\t]")
+
+
+def _reject_unsafe_identifier(field_name: str, value: str) -> None:
+    """Raise ``ValueError`` if ``value`` contains an ODBC delimiter.
+
+    Applied to ``DB_SERVER`` / ``DB_DATABASE`` / driver before they
+    get interpolated into the connection string. Catches
+    ``DB_SERVER="x.db;Authentication=...;UID=evil"`` style attempts at
+    the input boundary so the script keeps the same posture as
+    :mod:`apps.mcp.app.clients.sql` (issue #17): no free-form
+    connection string, no password code path.
+    """
+    match = _UNSAFE_ODBC_CHARS.search(value)
+    if match is not None:
+        raise ValueError(
+            f"check_metadata_drift: {field_name!r} contains forbidden character "
+            f"{match.group()!r}. Hostnames, database names and ODBC driver "
+            "names must not contain any of: ; = { } \" ' or control chars."
+        )
 
 # Schemas excluded from the "missing from catalog" calculation. ``sys``
 # and ``INFORMATION_SCHEMA`` are SQL Server system schemas; ``_metadata``
@@ -199,13 +227,25 @@ def _connect(
         raise ValueError("DB_SERVER is required (e.g. 'myserver.database.windows.net')")
     if not database or not database.strip():
         raise ValueError("DB_DATABASE is required (e.g. 'calabriowfm')")
+    # Belt-and-braces against connection-string injection via env vars.
+    # Tested in :mod:`tests.test_check_metadata_drift` via the public
+    # helper :func:`_reject_unsafe_identifier`; the call here is the
+    # last line of defence before ``conn_str`` interpolation.
+    _reject_unsafe_identifier("DB_SERVER", server)
+    _reject_unsafe_identifier("DB_DATABASE", database)
+    _reject_unsafe_identifier("driver", driver)
 
     credential = DefaultAzureCredential(
         managed_identity_client_id=managed_identity_client_id or None,
         # Same lockdown rationale as apps/mcp/app/clients/sql.py: no
-        # password code path is allowed (issue #17). The script is
-        # expected to run either in CI (managed identity / OIDC-issued
-        # token) or locally under ``az login``.
+        # password code path is allowed (issue #17). The script runs
+        # either in CI under a Managed Identity attached to the
+        # runner / job (System-Assigned MI or a UAMI pinned via
+        # ``DB_MANAGED_IDENTITY_CLIENT_ID``) or locally under ``az
+        # login``. Workload-Identity / OIDC federation is *not*
+        # currently in scope for this script — if CI later switches
+        # to it, flip ``exclude_workload_identity_credential`` to
+        # ``False`` and update this comment in the same change.
         exclude_environment_credential=True,
         exclude_interactive_browser_credential=True,
         exclude_visual_studio_code_credential=True,
@@ -473,19 +513,20 @@ def _format_summary(report: dict[str, Any]) -> str:
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    """Construct the CLI parser — split out for testability."""
+    """Construct the CLI parser — split out for testability.
+
+    The script *always* writes the JSON report to stdout — there is
+    no toggle for that. A previous draft exposed a ``--json`` flag
+    that defaulted to ``True`` and could not be disabled; the flag
+    was dropped because it was a no-op that just inflated the CLI
+    surface. JSON-on-stdout is the contract.
+    """
     parser = argparse.ArgumentParser(
         prog="check_metadata_drift",
         description=(
             "Compare _metadata.catalog_* against INFORMATION_SCHEMA and "
-            "emit a drift report. Read-only; safe to re-run."
+            "emit a JSON drift report on stdout. Read-only; safe to re-run."
         ),
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        default=True,
-        help="(default) Write the JSON drift report to stdout.",
     )
     parser.add_argument(
         "--summary",
@@ -532,8 +573,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         connection.close()
 
-    # JSON to stdout (always — ``--json`` is on by default and there is
-    # no way to disable it; the flag exists for self-documentation).
+    # JSON to stdout is the script's only data contract; see the
+    # rationale in :func:`_build_arg_parser`.
     sys.stdout.write(json.dumps(report, sort_keys=True, indent=2))
     sys.stdout.write("\n")
 
