@@ -19,19 +19,39 @@ def _clean_markdown_cell(text: str) -> str:
     return " ".join(text.split()).replace("|", "\\|")
 
 
-def _schema_type(schema: dict[str, Any]) -> str:
+def _schema_type_parts(schema: dict[str, Any]) -> list[str]:
+    """Return the JSON-schema ``type`` as a list of individual parts.
+
+    Splitting into parts (rather than returning a pre-joined string) lets
+    the table renderer wrap each part in its own code span and join with
+    an escaped ``\\|``. A single backtick span containing a raw ``|``
+    — even between code-span backticks — is read by the GFM table
+    parser as a column separator and silently corrupts the row.
+    """
     if "type" in schema:
         type_value = schema["type"]
         if isinstance(type_value, list):
-            return " | ".join(str(part) for part in type_value)
-        return str(type_value)
+            return [str(part) for part in type_value]
+        return [str(type_value)]
     if "anyOf" in schema:
-        return " | ".join(_schema_type(part) for part in schema["anyOf"])
+        return [part for sub in schema["anyOf"] for part in _schema_type_parts(sub)]
     if "oneOf" in schema:
-        return " | ".join(_schema_type(part) for part in schema["oneOf"])
+        return [part for sub in schema["oneOf"] for part in _schema_type_parts(sub)]
     if "$ref" in schema:
-        return str(schema["$ref"])
-    return "unknown"
+        return [str(schema["$ref"])]
+    return ["unknown"]
+
+
+def _render_type_cell(schema: dict[str, Any]) -> str:
+    r"""Render a JSON-schema ``type`` as a table cell.
+
+    Each part gets its own backtick-wrapped code span, joined with an
+    escaped ``\|`` so the GFM table parser keeps treating the cell as
+    a single column. Example: ``integer | null`` renders as
+    ``` `integer` \| `null` ```.
+    """
+    parts = _schema_type_parts(schema)
+    return " \\| ".join(f"`{part}`" for part in parts)
 
 
 def _render_param_table(parameters: dict[str, Any]) -> str:
@@ -48,7 +68,7 @@ def _render_param_table(parameters: dict[str, Any]) -> str:
         schema = properties[name]
         lines.append(
             "| "
-            f"`{name}` | `{_schema_type(schema)}` | "
+            f"`{name}` | {_render_type_cell(schema)} | "
             f"{'yes' if name in required else 'no'} | "
             f"{_clean_markdown_cell(schema.get('description') or '')} |"
         )
@@ -83,13 +103,13 @@ async def _generate() -> str:
     for namespace in ordered_namespaces:
         lines.append(f"## {namespace}")
         lines.append("")
-        for tool in sorted(tool_groups[namespace], key=lambda entry: entry["name"]):
-            lines.append(f"### {tool['name']}")
+        for entry in sorted(tool_groups[namespace], key=lambda item: item["name"]):
+            lines.append(f"### {entry['name']}")
             lines.append("")
-            if tool["description"]:
-                lines.append(_clean_markdown_cell(tool["description"]))
+            if entry["description"]:
+                lines.append(_clean_markdown_cell(entry["description"]))
                 lines.append("")
-            lines.append(_render_param_table(tool["parameters"]))
+            lines.append(_render_param_table(entry["parameters"]))
             lines.append("")
         lines.append("")
 

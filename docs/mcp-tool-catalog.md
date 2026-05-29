@@ -46,5 +46,5 @@ Validate ``sql`` and execute it read-only against Azure SQL. The SQL is first pu
 
 | name | type | required | description |
 |---|---|---|---|
-| `max_rows` | `integer | null` | no | Hard cap on returned rows. Defaults to ``Settings.query_max_rows_default`` (200); must be between 1 and ``Settings.query_max_rows_cap`` (1000) inclusive. |
+| `max_rows` | `integer` \| `null` | no | Hard cap on returned rows. Defaults to ``Settings.query_max_rows_default`` (200); must be between 1 and ``Settings.query_max_rows_cap`` (1000) inclusive. |
 | `sql` | `string` | yes | Raw T-SQL. Must be a single read-only statement. |
