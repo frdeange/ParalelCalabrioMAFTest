@@ -6,7 +6,7 @@
 
 ## Status
 
-**Phase 2 — in progress.** The FastMCP root server, the two namespaced sub-servers (`schema` / `query`) and the Streamable HTTP ASGI entrypoint are in place ([#16](https://github.com/frdeange/ParalelCalabrioMAFTest/issues/16)). Day-1 tools, the SQL client, the validator and the Dockerfile land in the remaining Phase 2 issues.
+**Phase 2 — in progress.** The FastMCP root server, namespaced schema/query tools, SQL client/validator, container build and auto-generated tool catalog are in place.
 
 ## Day-1 tools (5)
 
@@ -34,8 +34,10 @@ app/
 tests/                  ✅ 8 tests, 97% cov (settings + discovery)
 pyproject.toml          ✅
 .env.example            ✅
-scripts/                ⏳ #21 bootstrap_metadata.py / seed_extended_properties.py
-Dockerfile              ⏳ #24
+scripts/
+├── gen_tool_catalog.py ✅ writes docs/mcp-tool-catalog.md
+└── ...                 ⏳ #21 bootstrap_metadata.py / seed_extended_properties.py
+Dockerfile              ✅ #24 multi-stage 3.13-slim + ODBC runtime
 ```
 
 > Tools the issue tracker references that are **not** in this scaffold yet:
@@ -55,9 +57,29 @@ uvicorn app.main:app --port 8001
 
 > ⚠️ **Monorepo gotcha**: this service and [`apps/backend`](../backend/) both ship a top-level `app/` package. If you `pip install -e .` both in the same Python env (e.g. while working on cross-service changes locally), alphabetical `.pth` ordering makes `wfm-backend` win bare `import app` calls. `pytest` from `apps/mcp/` resolves `app` correctly thanks to `pythonpath = ["."]` in [pyproject.toml](pyproject.toml). The dev container does **not** install either service editable by default — you opt in per service — so the collision is something you only hit if you explicitly install both. In production each container ships only its own wheel.
 
+## Docker
+
+```bash
+docker build -t mcp apps/mcp
+docker run --rm -p 8001:8001 mcp
+# → MCP Streamable HTTP endpoint on http://localhost:8001/mcp/
+```
+
+The image uses a multi-stage `python:3.13-slim-bookworm` build, installs `msodbcsql18` + `unixodbc` in runtime, and runs as non-root user `mcp` (uid `10001`).
+
+## Tool catalog
+
+```bash
+cd apps/mcp
+python scripts/gen_tool_catalog.py
+python scripts/gen_tool_catalog.py --check
+```
+
+`--check` is used in CI to fail if [`docs/mcp-tool-catalog.md`](../../docs/mcp-tool-catalog.md) is stale.
+
 ## Environment variables
 
-See [PLAN.md §14 MCP](../../PLAN.md#14-environment-variables-inventory). The scaffold only consumes the three knobs in [`.env.example`](.env.example); the SQL / KV / HMAC settings land in the matching Phase 2 issues.
+See [PLAN.md §14 MCP](../../PLAN.md#14-environment-variables-inventory) and [`.env.example`](.env.example) for the server path/stateless/log knobs and SQL-related runtime settings.
 
 ## Design highlights
 
