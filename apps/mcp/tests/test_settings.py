@@ -90,3 +90,52 @@ def test_sql_identifiers_reject_odbc_delimiters(
     monkeypatch.setenv(field, bad)
     with pytest.raises(ValidationError, match="forbidden character"):
         Settings()
+
+
+# ---------------------------------------------------------------------------
+# query.execute row caps (issue #20)
+# ---------------------------------------------------------------------------
+
+
+def test_query_row_cap_defaults() -> None:
+    """Out of the box, ``execute`` returns up to 200 rows / hard cap 1000."""
+    s = Settings()
+    assert s.query_max_rows_default == 200
+    assert s.query_max_rows_cap == 1_000
+
+
+def test_query_row_cap_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both caps are tunable via env vars (per-deployment knob)."""
+    monkeypatch.setenv("MCP_QUERY_MAX_ROWS_DEFAULT", "50")
+    monkeypatch.setenv("MCP_QUERY_MAX_ROWS_CAP", "500")
+    s = Settings()
+    assert s.query_max_rows_default == 50
+    assert s.query_max_rows_cap == 500
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["MCP_QUERY_MAX_ROWS_DEFAULT", "MCP_QUERY_MAX_ROWS_CAP"],
+)
+def test_query_row_caps_reject_non_positive(
+    monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    """``0`` or negative caps are rejected at boot."""
+    monkeypatch.setenv(field, "0")
+    with pytest.raises(ValidationError, match=">= 1"):
+        Settings()
+
+
+def test_query_row_default_must_not_exceed_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``MCP_QUERY_MAX_ROWS_DEFAULT > MCP_QUERY_MAX_ROWS_CAP`` is a config bug.
+
+    Otherwise every ``query.execute`` call that omits ``max_rows`` would
+    be rejected by the tool itself for asking for more rows than the
+    hard cap permits — a confusing failure mode that should never ship.
+    """
+    monkeypatch.setenv("MCP_QUERY_MAX_ROWS_DEFAULT", "200")
+    monkeypatch.setenv("MCP_QUERY_MAX_ROWS_CAP", "100")
+    with pytest.raises(ValidationError, match="must not exceed"):
+        Settings()

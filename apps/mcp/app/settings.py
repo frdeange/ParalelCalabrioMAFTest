@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Mirrors ``app.clients.sql._UNSAFE_ODBC_CHARS``. Defined here too so
@@ -83,6 +83,22 @@ class Settings(BaseSettings):
     # interactive browser flows; we explicitly forbid both.
     environment: str = "local"
 
+    # ------------------------------------------------------------------
+    # query.execute row caps (issue #20)
+    # ------------------------------------------------------------------
+    # ``query.execute`` defaults to returning at most
+    # ``query_max_rows_default`` rows; callers may override per call up
+    # to ``query_max_rows_cap``. Out-of-range ``max_rows`` raises rather
+    # than silently clamping so the agent does not get back a smaller
+    # result than the one it explicitly requested and treat it as
+    # complete.
+    #
+    # The 200/1000 defaults mirror PLAN.md §6.3 ("Day-1 tools, page
+    # 200 rows by default, cap at 1k"). Tuning is per-deployment via
+    # ``MCP_QUERY_MAX_ROWS_DEFAULT`` / ``MCP_QUERY_MAX_ROWS_CAP``.
+    query_max_rows_default: int = 200
+    query_max_rows_cap: int = 1_000
+
     @field_validator("azure_sql_server", "azure_sql_database")
     @classmethod
     def _reject_odbc_delimiters(cls, value: str | None) -> str | None:
@@ -107,6 +123,35 @@ class Settings(BaseSettings):
                 "control chars."
             )
         return value
+
+    @field_validator("query_max_rows_default", "query_max_rows_cap")
+    @classmethod
+    def _reject_non_positive_row_caps(cls, value: int) -> int:
+        """Both row caps must be strictly positive ints.
+
+        A zero or negative default would make every ``query.execute``
+        call fail at the ``SqlDatabaseClient.execute`` layer with a
+        less actionable error. Reject at boot instead.
+        """
+        if value < 1:
+            raise ValueError(f"must be >= 1, got {value}")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_row_cap_ordering(self) -> Settings:
+        """``query_max_rows_default`` must not exceed ``query_max_rows_cap``.
+
+        Otherwise a caller passing ``max_rows=None`` would request
+        more rows than the hard cap permits and the tool would reject
+        its own default — a confusing failure mode that should never
+        ship to production.
+        """
+        if self.query_max_rows_default > self.query_max_rows_cap:
+            raise ValueError(
+                f"MCP_QUERY_MAX_ROWS_DEFAULT ({self.query_max_rows_default}) must "
+                f"not exceed MCP_QUERY_MAX_ROWS_CAP ({self.query_max_rows_cap})."
+            )
+        return self
 
 
 def get_settings() -> Settings:
