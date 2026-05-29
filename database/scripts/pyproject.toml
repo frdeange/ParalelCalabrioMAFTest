@@ -40,6 +40,7 @@ dev = [
     "pytest>=8.3",
     "pytest-cov>=5.0",
     "ruff>=0.7",
+    "mypy>=1.13",
 ]
 
 [project.scripts]
@@ -108,3 +109,26 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011"]
+
+# ---------------------------------------------------------------------------
+# mypy — mirrors apps/mcp/pyproject.toml so both Python projects in the
+# repo type-check under the same strict policy. pyodbc and azure.identity
+# do not ship type stubs (and ``types-pyodbc`` is unofficial), so we
+# silence missing-import errors for exactly those modules rather than
+# loosening the global policy.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+
+[[tool.mypy.overrides]]
+module = ["pyodbc", "azure.identity"]
+ignore_missing_imports = true

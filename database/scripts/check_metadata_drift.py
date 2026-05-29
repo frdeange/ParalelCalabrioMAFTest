@@ -60,7 +60,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 # ---------------------------------------------------------------------------
 # ODBC / Entra constants (mirrors apps/mcp/app/clients/sql.py)
@@ -266,7 +266,14 @@ def _connect(
         "TrustServerCertificate=no;"
         "Connection Timeout=30;"
     )
-    return pyodbc.connect(conn_str, attrs_before={_SQL_COPT_SS_ACCESS_TOKEN: token_struct})
+    # ``pyodbc`` ships no type stubs, so the return type collapses to
+    # ``Any`` under ``mypy --strict``. Cast back to the local
+    # ``_Connection`` Protocol so callers (and the rest of the module)
+    # keep the typed contract this file defines.
+    return cast(
+        _Connection,
+        pyodbc.connect(conn_str, attrs_before={_SQL_COPT_SS_ACCESS_TOKEN: token_struct}),
+    )
 
 
 # ---------------------------------------------------------------------------
