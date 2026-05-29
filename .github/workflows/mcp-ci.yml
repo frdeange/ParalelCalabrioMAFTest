@@ -5,10 +5,22 @@ on:
     paths:
       - "apps/mcp/**"
       - ".github/workflows/mcp-ci.yml"
+      # Drift gate inputs (issue #22): the catalog vs. live schema
+      # comparison must re-run whenever either side moves, otherwise
+      # a schema/seed/script change can land without ever tripping
+      # the gate it was added to enforce.
+      - "database/01-schemas-and-tables.sql"
+      - "database/02-views.sql"
+      - "database/03-seed-data.sql"
+      - "database/scripts/**"
   push:
     branches: [develop, main]
     paths:
       - "apps/mcp/**"
+      - "database/01-schemas-and-tables.sql"
+      - "database/02-views.sql"
+      - "database/03-seed-data.sql"
+      - "database/scripts/**"
 
 jobs:
   lint-test:
@@ -43,6 +55,48 @@ jobs:
 
       - name: Test
         run: pytest -v --cov=app --cov-report=term-missing
+
+      - name: Tool catalog drift check
+        run: python scripts/gen_tool_catalog.py --check
+
+      # Opt-in integration suite (issue #23). Spins up an mssql
+      # testcontainer, bootstraps ``database/01-03*.sql`` and exercises
+      # the schema + query tools end-to-end. Kept in the same job (not
+      # a separate ``needs``-gated one) so the Python setup + ODBC
+      # install above are reused; runs after the fast unit suite so a
+      # broken unit test fails the build quickly.
+      #
+      # The drift checker (issue #22) is intentionally excluded from
+      # this step \u2014 it runs as its own step below so the build log
+      # makes it obvious when drift specifically is what failed (the
+      # acceptance criterion asks for an actionable diff, and a
+      # dedicated step keeps the failure signal sharp).
+      #
+      # Coverage is deliberately *not* re-uploaded here: the unit run
+      # already enforces the gate, and counting integration tests
+      # twice would double-count assertions and mask regressions.
+      - name: Integration tests (mssql testcontainer)
+        env:
+          MCP_RUN_INTEGRATION: "1"
+        run: pytest tests/integration --ignore=tests/integration/test_drift_check_integration.py -v --no-cov
+
+      # Drift check (issue #22). Runs the catalog-vs-INFORMATION_SCHEMA
+      # comparator from ``database/scripts/check_metadata_drift.py``
+      # against the same testcontainer-bootstrapped DB the integration
+      # step uses (the test reuses the session-scoped ``_mssql_container``
+      # fixture, so the container is started once for both steps within
+      # a single pytest session-per-step model \u2014 the container *does*
+      # restart between the two steps because each ``pytest`` invocation
+      # is its own session, but bootstrap is ~6\u201310s warm and the
+      # explicit step is worth it for log clarity).
+      #
+      # A red diff here means ``database/01-02*.sql`` (live schema) and
+      # ``database/03-seed-data.sql`` (catalog) have drifted apart and
+      # need to be re-aligned before merging.
+      - name: Drift check (mssql testcontainer)
+        env:
+          MCP_RUN_INTEGRATION: "1"
+        run: pytest tests/integration/test_drift_check_integration.py -v --no-cov
 
   docker-build:
     # Activated automatically once apps/mcp/Dockerfile lands (issue #24).

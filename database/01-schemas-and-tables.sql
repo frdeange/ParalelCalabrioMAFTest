@@ -194,6 +194,31 @@ BEGIN TRY
         );
     END;
 
+    -- Append-only audit log of MCP tool calls. Populated by the MCP server
+    -- (apps/mcp/) on every schema.* / query.* invocation. Used for:
+    --   * troubleshooting agent behaviour ("why did the LLM run this SQL?"),
+    --   * security review (per-BU activity, slow queries, failed calls),
+    --   * future cost / rate-limit analysis.
+    -- Lives in [_metadata] so the read-only role uai_readonly can SELECT it
+    -- for diagnostics without unlocking the OLTP schemas.
+    IF OBJECT_ID(N'_metadata.tool_audit', N'U') IS NULL
+    BEGIN
+        CREATE TABLE _metadata.tool_audit (
+            audit_id BIGINT IDENTITY(1, 1) NOT NULL CONSTRAINT PK_tool_audit PRIMARY KEY,
+            ts DATETIME2(3) NOT NULL CONSTRAINT DF_tool_audit_ts DEFAULT (SYSUTCDATETIME()),
+            bu_id INT NOT NULL,
+            user_oid NVARCHAR(64) NULL,
+            tool_name NVARCHAR(100) NOT NULL,
+            tool_args NVARCHAR(MAX) NULL,
+            sql_text NVARCHAR(MAX) NULL,
+            row_count INT NULL,
+            duration_ms INT NULL,
+            success BIT NOT NULL,
+            error_message NVARCHAR(2000) NULL
+        );
+        CREATE INDEX IX_tool_audit_ts_bu ON _metadata.tool_audit (ts DESC, bu_id);
+    END;
+
     IF OBJECT_ID(N'wfm.team', N'U') IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM sys.key_constraints WHERE name = N'UQ_wfm_team_bu_team')
     BEGIN

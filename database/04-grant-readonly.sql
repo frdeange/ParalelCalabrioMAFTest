@@ -52,6 +52,13 @@ REVOKE SELECT ON SCHEMA::[analytics] FROM [calabriomaf-uais];
 GRANT SELECT ON SCHEMA::[_metadata] TO [uai_readonly];
 GRANT SELECT ON SCHEMA::[analytics] TO [uai_readonly];
 
+-- The MCP server appends one row per tool call to _metadata.tool_audit
+-- (see database/01-schemas-and-tables.sql). Grant INSERT narrowly on
+-- that single object — the role remains read-only everywhere else.
+-- UPDATE / DELETE are deliberately NOT granted: the table is
+-- append-only by policy.
+GRANT INSERT ON OBJECT::[_metadata].[tool_audit] TO [uai_readonly];
+
 IF NOT EXISTS (
     SELECT 1
     FROM sys.database_role_members drm
