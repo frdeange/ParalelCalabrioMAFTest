@@ -39,3 +39,31 @@ def pytest_configure(config: pytest.Config) -> None:  # noqa: ARG001 - pytest ho
     """
     for var in _MCP_SCAFFOLD_ENV_VARS:
         os.environ.pop(var, None)
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config,  # noqa: ARG001 - pytest hook signature
+    items: list[pytest.Item],
+) -> None:
+    """Skip ``@pytest.mark.integration`` tests unless explicitly opted in.
+
+    Integration tests under ``tests/integration/`` spin up an mssql
+    testcontainer (issue #23). They cost ~30-60 seconds of container
+    startup and require a running Docker daemon, so we keep them out
+    of the default ``pytest`` invocation. Opt in by exporting
+    ``MCP_RUN_INTEGRATION=1`` before running the suite (CI does this
+    in a dedicated job after the fast unit tests pass).
+
+    We deliberately use a runtime env var rather than a pytest CLI
+    flag so the same gate works for ``pytest`` invocations made by
+    editor integrations, ``tox`` recipes and CI without needing
+    bespoke argv plumbing.
+    """
+    if os.environ.get("MCP_RUN_INTEGRATION", "").strip() == "1":
+        return
+    skip_integration = pytest.mark.skip(
+        reason="integration tests are opt-in; set MCP_RUN_INTEGRATION=1 to enable",
+    )
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip_integration)

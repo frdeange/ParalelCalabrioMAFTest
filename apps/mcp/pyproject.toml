@@ -87,6 +87,14 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.7",
     "mypy>=1.13",
+    # Integration tests (``tests/integration/``) spin up a real
+    # ``mcr.microsoft.com/mssql/server:2022-latest`` container via
+    # testcontainers-python so the schema + query tools can be
+    # exercised end-to-end against a real engine (issue #23). The
+    # tests are gated by ``MCP_RUN_INTEGRATION=1`` so the unit suite
+    # stays Docker-free; the dep is in ``dev`` (not a separate extra)
+    # to keep the install matrix simple.
+    "testcontainers[mssql]>=4.10",
 ]
 
 [project.urls]
@@ -120,12 +128,28 @@ addopts = [
     "--strict-markers",
     "--strict-config",
 ]
+markers = [
+    # Integration tests under ``tests/integration/`` need a running
+    # Docker daemon (they spin up an mssql testcontainer). The
+    # ``conftest.py`` hook auto-skips anything carrying this marker
+    # unless ``MCP_RUN_INTEGRATION=1`` is set in the environment, so
+    # the default ``pytest`` invocation stays Docker-free.
+    "integration: opt-in integration test (requires Docker + MCP_RUN_INTEGRATION=1)",
+]
 filterwarnings = [
     "error",
     # FastMCP emits a deprecation warning for the legacy ``prefix=`` kwarg
     # on ``mount(...)``. We do NOT use it (we pass ``namespace=``), but
     # downstream libs may; keep the warning visible only as a warning.
     "ignore:.*The 'prefix' parameter is deprecated.*:DeprecationWarning",
+    # ``testcontainers[mssql]`` 4.10+ uses the deprecated
+    # ``@wait_container_is_ready`` decorator internally. The warning
+    # fires the moment we import ``testcontainers.mssql``, which
+    # would otherwise fail collection of ``tests/integration/``
+    # under the ``error`` filter above. We only swallow the one
+    # message coming from the testcontainers package; any other
+    # ``DeprecationWarning`` still escalates to an error.
+    "ignore:.*@wait_container_is_ready decorator is deprecated.*:DeprecationWarning:testcontainers.*",
 ]
 
 # ---------------------------------------------------------------------------
@@ -134,7 +158,7 @@ filterwarnings = [
 [tool.coverage.run]
 source = ["app"]
 branch = true
-omit = ["tests/*"]
+omit = ["tests/*", "tests/integration/*"]
 
 [tool.coverage.report]
 fail_under = 70
