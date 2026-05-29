@@ -61,7 +61,7 @@ def _make_mock_client(*results: QueryResult) -> MagicMock:
 def _executed_sql(mock_client: MagicMock, call_index: int = 0) -> str:
     """Return the SQL text passed to ``client.execute`` for that call."""
     args, _ = mock_client.execute.await_args_list[call_index]
-    return args[0]
+    return str(args[0])
 
 
 def _executed_params(mock_client: MagicMock, call_index: int = 0) -> tuple[Any, ...]:
@@ -188,7 +188,7 @@ async def test_search_tables_rejects_boolean_top_k() -> None:
     """``True`` is a Python ``int`` but never a valid count."""
     set_sql_client(_make_mock_client())
     with pytest.raises(ValueError, match="top_k"):
-        await search_tables(query="abc", top_k=True)  # type: ignore[arg-type]
+        await search_tables(query="abc", top_k=True)
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +326,10 @@ async def test_describe_table_aggregates_header_columns_and_joins() -> None:
 )
 async def test_get_distinct_values_rejects_empty_names(field: str, value: str) -> None:
     set_sql_client(_make_mock_client())
-    kwargs = {"table_name": "analytics.vw_PersonDetail", "column_name": "status"}
+    kwargs: dict[str, Any] = {
+        "table_name": "analytics.vw_PersonDetail",
+        "column_name": "status",
+    }
     kwargs[field] = value
     with pytest.raises(ValueError, match=field):
         await get_distinct_values(**kwargs)

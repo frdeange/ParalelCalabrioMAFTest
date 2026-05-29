@@ -54,7 +54,7 @@ _DRIFT_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "database" / "scripts
 if str(_DRIFT_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_DRIFT_SCRIPTS_DIR))
 
-import check_metadata_drift  # noqa: E402  (path-injected import)
+import check_metadata_drift  # type: ignore[import-not-found]  # noqa: E402  (path-injected import)
 
 from .conftest import _ConnInfo  # noqa: E402
 

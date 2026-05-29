@@ -71,13 +71,13 @@ def _make_mock_client(*results: QueryResult) -> MagicMock:
 def _executed_args(mock_client: MagicMock, call_index: int = 0) -> tuple[Any, ...]:
     """Return the positional args passed to ``client.execute`` for that call."""
     args, _ = mock_client.execute.await_args_list[call_index]
-    return args
+    return tuple(args)
 
 
 def _executed_kwargs(mock_client: MagicMock, call_index: int = 0) -> dict[str, Any]:
     """Return the keyword args passed to ``client.execute`` for that call."""
     _, kwargs = mock_client.execute.await_args_list[call_index]
-    return kwargs
+    return dict(kwargs)
 
 
 # ---------------------------------------------------------------------------

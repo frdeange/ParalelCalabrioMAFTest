@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+import string
 import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -55,7 +56,9 @@ import pytest
 
 pyodbc = pytest.importorskip("pyodbc", reason="pyodbc not installed")
 try:
-    from testcontainers.mssql import SqlServerContainer  # type: ignore[import-not-found]
+    from testcontainers.mssql import (  # type: ignore[import-untyped]
+        SqlServerContainer,
+    )
 except ImportError:  # pragma: no cover - guard for CI without the extra installed
     pytest.skip(
         "testcontainers[mssql] is not installed; "
@@ -76,14 +79,23 @@ logger = logging.getLogger(__name__)
 # source control (closes the GitGuardian alert raised on the first
 # revision of this file, which hard-coded the value).
 #
-# Composition: the ``Aa1!`` prefix guarantees SQL Server's
-# complexity policy is met (≥ 3 of {upper, lower, digit, symbol}
-# and ≥ 8 chars) regardless of what the URL-safe token happens to
-# pick from its base64url alphabet; the ``token_urlsafe(24)`` tail
-# provides ~192 bits of entropy. The container is bound to a
-# random localhost port and torn down at session exit, so the
+# Composition: one random char from each of the four complexity
+# classes that SQL Server requires (≥ 3 of {upper, lower, digit,
+# symbol} and ≥ 8 chars) plus a ``token_urlsafe(24)`` tail that
+# contributes ~192 bits of entropy. We avoid any hard-coded literal
+# that looks password-shaped so secret-scanners don't flag the
+# generator itself as a false positive. The container is bound to
+# a random localhost port and torn down at session exit, so the
 # credential never leaves the local docker network.
-_SA_PASSWORD = "Aa1!" + secrets.token_urlsafe(24)
+_SA_PASSWORD = "".join(
+    (
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+        secrets.choice("!@#%^&*"),
+        secrets.token_urlsafe(24),
+    )
+)
 
 # Lines that delimit T-SQL batches. We split on ``^GO\s*$`` because
 # ``GO`` is a sqlcmd directive, not a TSQL statement — pyodbc cannot
