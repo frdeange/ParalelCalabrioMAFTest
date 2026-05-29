@@ -62,11 +62,22 @@ classifiers = [
 #                             the *only* SQL auth mechanism. Key Vault
 #                             is reserved for the HMAC shared secret
 #                             (#47), not for SQL credentials.
+#   - ``sqlglot``           → ``app/security/sql_validator.py`` parses
+#                             every agent-submitted SQL string into an
+#                             AST and gates it against an allowlist of
+#                             top-level node types + a blocklist of
+#                             mutating / executing nodes (issue #19,
+#                             PLAN.md §8 / §11). Pinned to a known-good
+#                             major (≥ 30) — we exercise specific node
+#                             classes (``exp.Execute``, ``exp.Grant``,
+#                             ``exp.IfBlock``, ``exp.TruncateTable``)
+#                             whose names were stabilised in 25.x.
 dependencies = [
     "fastmcp==3.3.1",
     "pydantic-settings>=2.5",
     "pyodbc>=5.2",
     "azure-identity>=1.19",
+    "sqlglot>=30,<31",
 ]
 
 [project.optional-dependencies]
