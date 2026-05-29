@@ -344,6 +344,19 @@ def _normalize_type(t: str) -> str:
     return t.split("(", 1)[0].strip().lower()
 
 
+def _schema_of(table_name: str) -> str:
+    """Return the schema prefix of a fully-qualified ``schema.table``.
+
+    Used by the ``include_schemas`` filter so column rows (which only
+    carry ``schema.table``) can be matched against the schema scope
+    without re-fetching ``INFORMATION_SCHEMA``. Returns the empty
+    string when the input has no dot — such rows are never matched
+    by an include-list filter, which is the safe default.
+    """
+    head, sep, _ = table_name.partition(".")
+    return head if sep else ""
+
+
 def compute_drift(
     db_tables: Sequence[_DbTable],
     db_columns: Sequence[_DbColumn],
@@ -351,6 +364,7 @@ def compute_drift(
     catalog_columns: Sequence[_CatalogColumn],
     *,
     now: datetime | None = None,
+    include_schemas: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Compare the live DB state to the catalog and return a drift report.
 
@@ -369,7 +383,24 @@ def compute_drift(
     * "Missing from database" / "type mismatches" only consider catalog
       rows where ``is_active = 1``. An inactive catalog table whose
       underlying view has been dropped is not drift, it is intentional.
+    * When ``include_schemas`` is given, only rows whose schema is in
+      the set are considered — on **both** sides. This is the seam
+      that lets a catalog cover only a curated subset of the DB
+      (e.g. ``analytics.vw_*`` views) without every system table
+      surfacing as drift. ``None`` (the default) preserves the
+      pre-filter behaviour for callers that already constrain the
+      input lists themselves.
     """
+    if include_schemas is not None:
+        db_tables = [t for t in db_tables if t.schema_name in include_schemas]
+        db_columns = [c for c in db_columns if _schema_of(c.table_name) in include_schemas]
+        catalog_tables = [
+            t for t in catalog_tables if t.schema_name in include_schemas
+        ]
+        catalog_columns = [
+            c for c in catalog_columns if _schema_of(c.table_name) in include_schemas
+        ]
+
     active_table_names = {t.table_name for t in catalog_tables if t.is_active}
     known_table_names = {t.table_name for t in catalog_tables}
     db_table_names = {t.table_name for t in db_tables}
@@ -464,12 +495,14 @@ def collect_drift_from_connection(
     connection: _Connection,
     *,
     now: datetime | None = None,
+    include_schemas: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     """Open a cursor on ``connection``, fetch both sides, return the report.
 
     Convenience seam between ``_connect`` and ``compute_drift``; lets
     the tests exercise the full fetch path with a fake connection
-    while keeping ``main`` small.
+    while keeping ``main`` small. ``include_schemas`` is forwarded
+    verbatim to :func:`compute_drift` (see the filter rules there).
     """
     cursor = connection.cursor()
     try:
@@ -480,7 +513,12 @@ def collect_drift_from_connection(
     finally:
         cursor.close()
     return compute_drift(
-        db_tables, db_columns, catalog_tables, catalog_columns, now=now
+        db_tables,
+        db_columns,
+        catalog_tables,
+        catalog_columns,
+        now=now,
+        include_schemas=include_schemas,
     )
 
 
@@ -540,6 +578,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help="Exit 0 even when drift is detected (used by CI during migrations).",
     )
+    parser.add_argument(
+        "--include-schema",
+        action="append",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Restrict the comparison to the given schema. Repeatable. "
+            "Defaults to the value of ``DRIFT_CHECK_INCLUDE_SCHEMAS`` "
+            "(comma-separated) when set, otherwise the full DB is "
+            "considered. Use this to scope drift to the curated\n"
+            "agent-facing surface (e.g. ``--include-schema analytics``)."
+        ),
+    )
     return parser
 
 
@@ -556,6 +607,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     database = os.environ.get("DB_DATABASE", "").strip()
     mi_client_id = os.environ.get("DB_MANAGED_IDENTITY_CLIENT_ID", "").strip()
 
+    # Schema scope: CLI flag wins; otherwise fall back to the env
+    # var so CI can wire it without modifying the call site. ``None``
+    # (no flag, no env var) preserves the original "compare
+    # everything" behaviour.
+    include_schemas: frozenset[str] | None = None
+    if args.include_schema:
+        include_schemas = frozenset(s.strip() for s in args.include_schema if s.strip())
+    else:
+        env_val = os.environ.get("DRIFT_CHECK_INCLUDE_SCHEMAS", "").strip()
+        if env_val:
+            include_schemas = frozenset(
+                s.strip() for s in env_val.split(",") if s.strip()
+            )
+
     if not server or not database:
         print(
             "ERROR: DB_SERVER and DB_DATABASE must both be set in the environment.",
@@ -569,7 +634,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         managed_identity_client_id=mi_client_id,
     )
     try:
-        report = collect_drift_from_connection(connection)
+        report = collect_drift_from_connection(
+            connection, include_schemas=include_schemas
+        )
     finally:
         connection.close()
 
