@@ -5,10 +5,22 @@ on:
     paths:
       - "apps/mcp/**"
       - ".github/workflows/mcp-ci.yml"
+      # Drift gate inputs (issue #22): the catalog vs. live schema
+      # comparison must re-run whenever either side moves, otherwise
+      # a schema/seed/script change can land without ever tripping
+      # the gate it was added to enforce.
+      - "database/01-schemas-and-tables.sql"
+      - "database/02-views.sql"
+      - "database/03-seed-data.sql"
+      - "database/scripts/**"
   push:
     branches: [develop, main]
     paths:
       - "apps/mcp/**"
+      - "database/01-schemas-and-tables.sql"
+      - "database/02-views.sql"
+      - "database/03-seed-data.sql"
+      - "database/scripts/**"
 
 jobs:
   lint-test:

@@ -611,15 +611,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     # var so CI can wire it without modifying the call site. ``None``
     # (no flag, no env var) preserves the original "compare
     # everything" behaviour.
+    #
+    # An *empty* parsed set (e.g. ``--include-schema ''`` or
+    # ``DRIFT_CHECK_INCLUDE_SCHEMAS=','``) would otherwise be passed
+    # straight to ``compute_drift``, which filters out every row and
+    # silently returns a clean report — turning a misconfigured
+    # operator/CI value into a green build. Treat that case as
+    # "unscoped" instead so the drift gate fails loud rather than soft.
     include_schemas: frozenset[str] | None = None
     if args.include_schema:
-        include_schemas = frozenset(s.strip() for s in args.include_schema if s.strip())
+        parsed = frozenset(s.strip() for s in args.include_schema if s.strip())
+        if parsed:
+            include_schemas = parsed
     else:
         env_val = os.environ.get("DRIFT_CHECK_INCLUDE_SCHEMAS", "").strip()
         if env_val:
-            include_schemas = frozenset(
+            parsed = frozenset(
                 s.strip() for s in env_val.split(",") if s.strip()
             )
+            if parsed:
+                include_schemas = parsed
 
     if not server or not database:
         print(

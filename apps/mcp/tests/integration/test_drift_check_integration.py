@@ -13,9 +13,13 @@ The catalog (``database/03-seed-data.sql``) only describes
 base tables are deliberately *not* in the catalog because the MCP
 server only ever queries the analytics surface. Without scoping,
 the drift checker would flag every base table as ``missing_from_catalog``
-on a baseline run. We therefore pass ``include_schemas={"analytics"}``
-to constrain the comparison to the curated agent-facing surface
-(the same flag CI passes via ``DRIFT_CHECK_INCLUDE_SCHEMAS``).
+on a baseline run. The test therefore hard-codes
+``include_schemas={"analytics"}`` when calling
+:func:`check_metadata_drift.collect_drift_from_connection`. The
+equivalent operator/CI seam is ``--include-schema analytics`` (or the
+``DRIFT_CHECK_INCLUDE_SCHEMAS`` env var), but those parse in
+:func:`check_metadata_drift.main` and are not exercised here; the
+workflow runs this test with only ``MCP_RUN_INTEGRATION=1`` set.
 
 Two scenarios are exercised:
 

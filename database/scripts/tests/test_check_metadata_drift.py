@@ -830,3 +830,44 @@ def test_main_include_schema_cli_wins_over_env(
     tables = payload["missing_from_catalog"]["tables"]
     assert {t["table_name"] for t in tables} == {"analytics.vw_x"}
 
+
+@pytest.mark.parametrize(
+    "argv, env_val",
+    [
+        # Operator typo: explicit empty flag.
+        (["--include-schema", ""], None),
+        # CI typo: env var with only separators / whitespace.
+        ([], ","),
+        ([], " , "),
+    ],
+)
+def test_main_empty_include_schema_falls_back_to_unscoped(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    env_val: str | None,
+) -> None:
+    """Empty scope values must not silently disable the drift check.
+
+    An empty ``frozenset()`` passed to ``compute_drift`` filters out
+    every table/column and yields a clean report \u2014 turning a
+    misconfigured CLI/env value into a green build. The CLI must
+    treat that case as \"unscoped\" (i.e. ``None``) so the gate keeps
+    failing on real drift.
+    """
+    cursor = _make_cursor(
+        db_tables=[("analytics", "vw_x"), ("wfm", "agent")],
+    )
+    _patch_main_dependencies(monkeypatch, cursor)
+    if env_val is not None:
+        monkeypatch.setenv("DRIFT_CHECK_INCLUDE_SCHEMAS", env_val)
+
+    code = cmd.main(argv)
+    payload = json.loads(capsys.readouterr().out)
+
+    # Unscoped: both ``analytics.vw_x`` and ``wfm.agent`` surface as
+    # missing_from_catalog (no catalog rows in this fixture).
+    tables = {t["table_name"] for t in payload["missing_from_catalog"]["tables"]}
+    assert tables == {"analytics.vw_x", "wfm.agent"}
+    assert code == 1
+
