@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
@@ -70,11 +71,19 @@ from app.servers import schema as schema_module  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-# Strong SA password that satisfies SQL Server's complexity rule
-# (>=8 chars, mix of upper/lower/digit/symbol). The container is
-# ephemeral and bound to a random host port, so this credential
-# never leaves the local docker network.
-_SA_PASSWORD = "MCp$Integr@tionT3st!"
+# SA password for the ephemeral container. Generated fresh on
+# every test-session import so nothing secret-shaped ever lives in
+# source control (closes the GitGuardian alert raised on the first
+# revision of this file, which hard-coded the value).
+#
+# Composition: the ``Aa1!`` prefix guarantees SQL Server's
+# complexity policy is met (≥ 3 of {upper, lower, digit, symbol}
+# and ≥ 8 chars) regardless of what the URL-safe token happens to
+# pick from its base64url alphabet; the ``token_urlsafe(24)`` tail
+# provides ~192 bits of entropy. The container is bound to a
+# random localhost port and torn down at session exit, so the
+# credential never leaves the local docker network.
+_SA_PASSWORD = "Aa1!" + secrets.token_urlsafe(24)
 
 # Lines that delimit T-SQL batches. We split on ``^GO\s*$`` because
 # ``GO`` is a sqlcmd directive, not a TSQL statement — pyodbc cannot
@@ -252,7 +261,18 @@ def _mssql_container() -> Iterator[_ConnInfo]:
     try:
         container.start()
     except Exception as exc:  # pragma: no cover - env-dependent
-        pytest.skip(f"could not start mssql container ({exc!r})")
+        # The user (or CI via ``MCP_RUN_INTEGRATION=1``) explicitly
+        # opted into this suite, so a broken Docker daemon / image
+        # pull / port-bind failure must fail the run loudly. Skipping
+        # here would let CI report green with zero end-to-end
+        # coverage — exactly the gap the integration gate is meant
+        # to close. Reviewer (Copilot, PR #72) flagged this.
+        pytest.fail(
+            f"could not start mssql container ({exc!r}); "
+            "integration tests were opted in via MCP_RUN_INTEGRATION=1, "
+            "so this is a hard failure rather than a skip.",
+            pytrace=False,
+        )
     try:
         info = _ConnInfo(
             host=container.get_container_host_ip(),
@@ -276,7 +296,13 @@ def _mssql_container() -> Iterator[_ConnInfo]:
                 last_err = err
                 time.sleep(1.0)
         else:  # pragma: no cover - timing-dependent
-            pytest.skip(f"mssql container never accepted connections: {last_err!r}")
+            # Same rationale as the ``start()`` branch above: the
+            # suite is opt-in, so a container that never becomes
+            # reachable means the gate hasn't run — fail loudly.
+            pytest.fail(
+                f"mssql container never accepted connections within 60s: {last_err!r}",
+                pytrace=False,
+            )
         _bootstrap_schema(info)
         yield info
     finally:
