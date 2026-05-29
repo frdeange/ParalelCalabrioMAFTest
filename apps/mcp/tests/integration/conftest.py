@@ -56,7 +56,9 @@ import pytest
 
 pyodbc = pytest.importorskip("pyodbc", reason="pyodbc not installed")
 try:
-    from testcontainers.mssql import SqlServerContainer  # type: ignore[import-not-found]
+    from testcontainers.mssql import (  # type: ignore[import-untyped]
+        SqlServerContainer,
+    )
 except ImportError:  # pragma: no cover - guard for CI without the extra installed
     pytest.skip(
         "testcontainers[mssql] is not installed; "
