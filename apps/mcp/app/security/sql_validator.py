@@ -156,13 +156,23 @@ def validate(
         Raw SQL string. Must contain exactly one parseable statement.
     allowlist:
         Optional iterable of allowed table names. Matching is
-        case-insensitive and accepts both ``schema.table`` and bare
-        ``table`` entries (a bare entry matches references with *any*
-        schema; a qualified entry also matches bare references with
-        the same table name). Pass ``None`` to skip the allowlist
-        check entirely — useful for tests and for early scaffolding,
-        but production callers (e.g. ``query.execute``) must always
-        supply one sourced from ``_metadata.catalog_tables``.
+        case-insensitive. Two entry shapes are supported, with
+        deliberately different semantics:
+
+        * ``schema.table`` (qualified) — matches only the **exact**
+          qualified reference and a **bare** reference with no
+          schema (assumed to mean the same table). It does **not**
+          match the same bare name in a *different* schema; that
+          would silently widen the allowlist beyond what the caller
+          declared.
+        * ``table`` (bare) — matches references in *any* schema, as
+          well as bare references. Use this only when the caller
+          genuinely does not care which schema the table lives in.
+
+        Pass ``None`` to skip the allowlist check entirely — useful
+        for tests and for early scaffolding, but production callers
+        (e.g. ``query.execute``) must always supply one sourced from
+        ``_metadata.catalog_tables`` (qualified names).
 
     Returns
     -------
@@ -278,24 +288,49 @@ def _first_table_not_in_allowlist(
 ) -> str | None:
     """Return the first table not present in ``allowlist`` (or ``None``).
 
-    Matching is case-insensitive. An allowlist entry of ``"users"``
-    matches any reference whose bare name is ``users`` (with or
-    without schema). An entry of ``"dbo.users"`` additionally
-    populates a bare-name shortcut, so ``"users"`` in the SQL also
-    matches.
+    Matching rules (all case-insensitive):
+
+    * A qualified allowlist entry ``schema.table`` matches
+      - the exact qualified reference ``schema.table``, **and**
+      - a bare reference ``table`` (no schema, assumed to mean the
+        same table).
+      It does **not** match ``other.table`` — the schema scope is
+      part of the promise.
+    * A bare allowlist entry ``table`` matches the bare reference
+      ``table`` **and** any qualified reference ``*.table`` (any
+      schema). Use sparingly: it relaxes the schema check.
+
+    The split keeps qualified-entry promises honest while preserving
+    the historical "bare-entry matches anywhere" behaviour for
+    callers that opt in explicitly.
     """
-    allow: set[str] = set()
+    qualified_allow: set[str] = set()
+    bare_from_qualified: set[str] = set()
+    bare_allow: set[str] = set()
     for entry in allowlist:
         entry_lower = entry.lower()
-        allow.add(entry_lower)
         if "." in entry_lower:
-            allow.add(entry_lower.split(".", 1)[-1])
+            qualified_allow.add(entry_lower)
+            bare_from_qualified.add(entry_lower.split(".", 1)[-1])
+        else:
+            bare_allow.add(entry_lower)
 
     for table in tables:
         tl = table.lower()
-        bare = tl.split(".", 1)[-1] if "." in tl else tl
-        if tl not in allow and bare not in allow:
-            return table
+        if "." in tl:
+            bare = tl.split(".", 1)[-1]
+            # Qualified reference: must match an exact qualified entry,
+            # or match a bare allowlist entry (which intentionally
+            # accepts any schema).
+            if tl in qualified_allow or bare in bare_allow:
+                continue
+        else:
+            # Bare reference: matches a bare allowlist entry, or a
+            # qualified entry whose table part equals this name (since
+            # the caller "meant" the same table).
+            if tl in bare_allow or tl in bare_from_qualified:
+                continue
+        return table
     return None
 
 

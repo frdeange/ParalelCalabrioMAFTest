@@ -182,6 +182,38 @@ def test_allowlist_rejects_unknown_table() -> None:
     assert "secrets" in (result.reason or "").lower()
 
 
+def test_allowlist_qualified_entry_does_not_match_different_schema() -> None:
+    """A qualified allowlist entry must not authorise the same bare
+    name in a different schema (PR #69 review).
+
+    Allowlisting ``analytics.vw_persondetail`` is a promise about a
+    specific schema; ``other_schema.vw_persondetail`` is a different
+    table and must be rejected.
+    """
+    result = validate(
+        "SELECT * FROM other_schema.vw_persondetail",
+        allowlist={"analytics.vw_persondetail"},
+    )
+    assert not result.ok
+    assert "allowlist" in (result.reason or "")
+    assert "other_schema.vw_persondetail" in (result.reason or "")
+
+
+def test_allowlist_bare_entry_matches_any_schema() -> None:
+    """A bare allowlist entry intentionally matches any schema.
+
+    Documented behaviour: a bare entry relaxes the schema scope on
+    purpose. Production callers using catalog rows always pass
+    qualified names, so this branch is opt-in for tests and ad-hoc
+    use.
+    """
+    result = validate(
+        "SELECT * FROM analytics.users",
+        allowlist={"users"},
+    )
+    assert result.ok, result.reason
+
+
 def test_allowlist_none_skips_check() -> None:
     """``allowlist=None`` (the default) accepts any table."""
     result = validate("SELECT * FROM any.table_we_made_up")
@@ -248,8 +280,15 @@ def test_duplicate_tables_deduplicated_preserving_order() -> None:
 
 
 def test_returns_validation_result_dataclass() -> None:
-    """Smoke test on the public dataclass shape (frozen, immutable)."""
+    """Smoke test on the public dataclass shape (frozen, immutable).
+
+    ``ValidationResult`` is a frozen dataclass, so attribute assignment
+    raises :class:`dataclasses.FrozenInstanceError`, which inherits
+    from :class:`AttributeError`. Asserting on ``AttributeError``
+    specifically avoids hiding unrelated failures behind a blanket
+    ``Exception`` catch (per PR #69 review).
+    """
     result = validate("SELECT 1")
     assert isinstance(result, ValidationResult)
-    with pytest.raises((AttributeError, Exception)):
+    with pytest.raises(AttributeError):
         result.ok = False  # type: ignore[misc]
