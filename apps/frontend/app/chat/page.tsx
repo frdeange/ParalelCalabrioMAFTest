@@ -1,6 +1,7 @@
 "use client";
 
 import { AuthGuard } from "@/components/auth/AuthGuard";
+import { Chat } from "@/components/Chat";
 import { useAuth } from "@/lib/use-auth";
 
 export default function ChatPage() {
@@ -57,20 +58,9 @@ export default function ChatPage() {
           </div>
         </aside>
 
-        {/* Main chat area placeholder — CopilotKit wired in issue #27 */}
-        <main className="flex-1 flex flex-col items-center justify-center p-8">
-          <div className="max-w-2xl w-full text-center space-y-4">
-            <h1 className="text-2xl font-bold text-gray-900">
-              Supervisor Assist Chat
-            </h1>
-            <p className="text-gray-600">
-              Signed in as{" "}
-              <span className="font-medium">{account?.name ?? account?.username}</span>
-            </p>
-            <p className="text-gray-400 text-sm">
-              Chat interface will be wired with CopilotKit in issue #27.
-            </p>
-          </div>
+        {/* Main chat area — CopilotKit AG-UI integration */}
+        <main className="flex-1 flex flex-col">
+          <Chat />
         </main>
       </div>
     </AuthGuard>
