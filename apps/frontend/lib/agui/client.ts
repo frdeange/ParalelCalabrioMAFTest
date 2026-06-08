@@ -16,6 +16,11 @@
  */
 
 import { useAuth } from "@/lib/use-auth";
+import {
+  BU_DEBUG_HEADER,
+  getSelectedBu,
+  isPocBuOverrideEnabled,
+} from "@/lib/bu";
 
 export interface AguiMessage {
   id: string;
@@ -68,15 +73,24 @@ export function useAguiStream() {
         process.env.NEXT_PUBLIC_BACKEND_API_URL || "http://localhost:8000";
       const endpoint = `${backendUrl}/agui`;
 
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      };
+
+      // POC mode: forward the operator-selected BU as the x-debug-bu header,
+      // which APIM uses as the L3 layer of BU resolution (PLAN.md §6.4).
+      if (isPocBuOverrideEnabled()) {
+        const debugBu = getSelectedBu();
+        if (debugBu) headers[BU_DEBUG_HEADER] = debugBu;
+      }
+
       // Request body matches the backend AGUIRequest schema (see
       // apps/backend/tests/test_agui.py): messages carry an id, plus
       // thread_id / run_id (snake_case) for multi-turn continuity.
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
         body: JSON.stringify({
           messages,
           thread_id: threadId,
