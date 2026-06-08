@@ -24,28 +24,62 @@ export function isPocBuOverrideEnabled(): boolean {
 /**
  * BU ids selectable in POC mode. Configured via
  * `NEXT_PUBLIC_POC_BU_OPTIONS` (comma-separated) with a sensible default.
+ *
+ * Values must be numeric BU ids; non-numeric entries are dropped and
+ * duplicates are removed so a misconfigured env can never feed an invalid
+ * value into the `x-debug-bu` request header.
  */
 export function getPocBuOptions(): string[] {
   const raw = process.env.NEXT_PUBLIC_POC_BU_OPTIONS ?? "1,42,100";
-  return raw
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const seen = new Set<string>();
+  const options: string[] = [];
+  for (const part of raw.split(",")) {
+    const id = part.trim();
+    if (isValidBuId(id) && !seen.has(id)) {
+      seen.add(id);
+      options.push(id);
+    }
+  }
+  return options;
 }
 
-/** Read the persisted BU id, or null when unset / not in a browser. */
+/** True when `id` is a non-empty string of digits (a valid BU id). */
+function isValidBuId(id: string | null | undefined): id is string {
+  return typeof id === "string" && /^\d+$/.test(id);
+}
+
+/**
+ * Read the persisted BU id, or null when unset / invalid / not in a browser.
+ * `localStorage` access is guarded because it can throw in some browser modes
+ * (e.g. privacy settings), and a manually edited value is validated before use.
+ */
 export function getSelectedBu(): string | null {
   if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(BU_STORAGE_KEY);
+  let stored: string | null = null;
+  try {
+    stored = window.localStorage.getItem(BU_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+  return isValidBuId(stored) ? stored : null;
 }
 
-/** Persist (or clear) the selected BU id. */
+/**
+ * Persist (or clear) the selected BU id. Only valid numeric ids are stored;
+ * any other value clears the selection. `localStorage` access is guarded so a
+ * throwing storage backend can't break selection.
+ */
 export function setSelectedBu(buId: string | null): void {
   if (typeof window === "undefined") return;
-  if (buId) {
-    window.localStorage.setItem(BU_STORAGE_KEY, buId);
-  } else {
-    window.localStorage.removeItem(BU_STORAGE_KEY);
+  try {
+    if (isValidBuId(buId)) {
+      window.localStorage.setItem(BU_STORAGE_KEY, buId);
+    } else {
+      window.localStorage.removeItem(BU_STORAGE_KEY);
+    }
+  } catch {
+    // Storage unavailable (private mode, quota, disabled): keep going so the
+    // in-tab listeners still fire and the UI stays responsive.
   }
   for (const listener of listeners) listener();
 }
