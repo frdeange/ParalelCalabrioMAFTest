@@ -49,8 +49,10 @@ export function useAuth(): AuthState {
       });
       return response.accessToken;
     } catch {
-      // Silent acquisition failed (e.g. expired session) — fall back to redirect
-      await instance.loginRedirect({ ...apiRequest, ...loginRequest });
+      // Silent acquisition failed (e.g. expired session / consent needed).
+      // Fall back to an interactive redirect that still requests the API
+      // scopes — spreading apiRequest last so its scopes are not clobbered.
+      await instance.acquireTokenRedirect({ ...loginRequest, ...apiRequest, account });
       return null;
     }
   }, [instance, account]);

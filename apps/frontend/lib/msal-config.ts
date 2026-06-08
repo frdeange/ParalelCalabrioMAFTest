@@ -13,6 +13,23 @@ const clientId = process.env.NEXT_PUBLIC_AZURE_CLIENT_ID ?? "";
 const tenantId = process.env.NEXT_PUBLIC_AZURE_TENANT_ID ?? "";
 const redirectUri = process.env.NEXT_PUBLIC_REDIRECT_URI ?? (typeof window !== "undefined" ? window.location.origin : "");
 
+// Fail fast with an actionable message when required config is missing,
+// rather than letting MSAL throw obscure errors deep in the auth flow.
+// Skipped during SSR/build (no window) so static generation still works.
+if (typeof window !== "undefined") {
+  const missing = [
+    !clientId && "NEXT_PUBLIC_AZURE_CLIENT_ID",
+    !tenantId && "NEXT_PUBLIC_AZURE_TENANT_ID",
+    !redirectUri && "NEXT_PUBLIC_REDIRECT_URI",
+  ].filter(Boolean);
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required MSAL environment variable(s): ${missing.join(", ")}. ` +
+        "Set them in .env.local (see .env.local.example) or your App Service settings."
+    );
+  }
+}
+
 export const msalConfig: Configuration = {
   auth: {
     clientId,

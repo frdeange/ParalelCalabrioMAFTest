@@ -1,9 +1,9 @@
 /**
- * Chat component with CopilotKit integration for multi-turn workflow chat.
+ * Multi-turn chat component wired to the backend MAF workflow over the
+ * AG-UI SSE protocol (via `useAguiStream`).
  *
  * Features:
  * - Real-time streaming chat UI with message history
- * - CopilotKit integration for copilot-ready interactions
  * - Token streaming visualization
  * - Error toast notifications
  * - Auto-scroll to latest message
@@ -13,7 +13,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useAguiStream } from "@/lib/agui/client";
+import { useAguiStream, type AguiMessage } from "@/lib/agui/client";
 
 export interface ChatMessage {
   id: string;
@@ -28,6 +28,20 @@ export function Chat() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Stable thread id for the whole session so the backend can persist
+  // and reload multi-turn history (Cosmos chat-history). Generated lazily
+  // on first send (in an event handler, not during render) to keep the
+  // render pure.
+  const threadIdRef = useRef<string | null>(null);
+  const getThreadId = () => {
+    if (threadIdRef.current === null) {
+      threadIdRef.current =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `thread-${Date.now()}`;
+    }
+    return threadIdRef.current;
+  };
   const { stream } = useAguiStream();
 
   // Auto-scroll to bottom on new messages
@@ -56,43 +70,52 @@ export function Chat() {
     setInputValue("");
     setIsLoading(true);
 
+    // Build the full history (with stable ids) the backend expects.
+    const history: AguiMessage[] = [...messages, userMessage].map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+    }));
+
     // Create assistant message placeholder
     const assistantMessageId = `msg-${Date.now() + 1}`;
     let assistantContent = "";
 
     try {
       await stream(
-        inputValue,
-        (token) => {
-          // Stream token received
-          assistantContent += token;
-          setMessages((prev) => {
-            const lastMsg = prev[prev.length - 1];
-            if (lastMsg?.id === assistantMessageId) {
+        { messages: history, threadId: getThreadId() },
+        {
+          onToken: (token) => {
+            // Stream token received
+            assistantContent += token;
+            setMessages((prev) => {
+              const lastMsg = prev[prev.length - 1];
+              if (lastMsg?.id === assistantMessageId) {
+                return [
+                  ...prev.slice(0, -1),
+                  { ...lastMsg, content: assistantContent },
+                ];
+              }
               return [
-                ...prev.slice(0, -1),
-                { ...lastMsg, content: assistantContent },
+                ...prev,
+                {
+                  id: assistantMessageId,
+                  role: "assistant",
+                  content: assistantContent,
+                  timestamp: new Date(),
+                },
               ];
-            }
-            return [
-              ...prev,
-              {
-                id: assistantMessageId,
-                role: "assistant",
-                content: assistantContent,
-                timestamp: new Date(),
-              },
-            ];
-          });
-        },
-        (errorMsg) => {
-          // Error occurred
-          setError(errorMsg);
-          setIsLoading(false);
-        },
-        () => {
-          // Stream completed
-          setIsLoading(false);
+            });
+          },
+          onError: (errorMsg) => {
+            // Error occurred
+            setError(errorMsg);
+            setIsLoading(false);
+          },
+          onDone: () => {
+            // Stream completed
+            setIsLoading(false);
+          },
         }
       );
 

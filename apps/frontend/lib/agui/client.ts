@@ -1,38 +1,60 @@
 /**
  * AG-UI client for streaming chat messages to the backend MAF workflow.
  *
- * This client handles:
- * - SSE (Server-Sent Events) streaming from the APIM AG-UI endpoint
+ * Speaks the real AG-UI SSE protocol exposed by the backend
+ * (`add_agent_framework_fastapi_endpoint`). Each SSE frame is a
+ * `data: {json}` block whose `type` discriminator is one of the
+ * AG-UI event names (RUN_STARTED, TEXT_MESSAGE_CONTENT, RUN_ERROR,
+ * RUN_FINISHED, …). Field names on the wire are camelCase
+ * (`messageId`, `delta`, `threadId`, `runId`).
+ *
+ * Responsibilities:
+ * - SSE streaming from the APIM `chat-api-*` AG-UI route
  * - MSAL JWT Bearer token attachment on every request
- * - Proper error handling and user-friendly error messages
- * - Multi-turn conversation support
+ * - Mapping AG-UI events to simple token/error/done callbacks
+ * - Multi-turn conversation via a stable `thread_id`
  */
 
 import { useAuth } from "@/lib/use-auth";
 
-export interface ChatMessage {
+export interface AguiMessage {
+  id: string;
   role: "user" | "assistant";
   content: string;
 }
 
-export interface StreamEvent {
-  type: "token" | "error" | "done";
-  data: string;
+/** Subset of AG-UI events this client reacts to. Extra fields are ignored. */
+interface AguiEvent {
+  type: string;
+  delta?: string;
+  message?: string;
+}
+
+export interface StreamParams {
+  /** Full conversation history (each message needs a stable id). */
+  messages: AguiMessage[];
+  /** Stable thread id so the backend can load/append multi-turn history. */
+  threadId: string;
+}
+
+export interface StreamHandlers {
+  onToken: (token: string) => void;
+  onError: (error: string) => void;
+  onDone: () => void;
 }
 
 /**
- * Hook to stream a user message to the AG-UI backend endpoint.
+ * Hook to stream a conversation turn to the AG-UI backend endpoint.
  *
- * Yields tokens in real-time via Server-Sent Events and attaches MSAL bearer token.
+ * Yields assistant tokens in real-time via Server-Sent Events and attaches
+ * the MSAL bearer token acquired for the configured API scope.
  */
 export function useAguiStream() {
   const { acquireToken } = useAuth();
 
   const stream = async (
-    message: string,
-    onToken: (token: string) => void,
-    onError: (error: string) => void,
-    onDone: () => void
+    { messages, threadId }: StreamParams,
+    { onToken, onError, onDone }: StreamHandlers
   ) => {
     try {
       // Acquire MSAL token with API scope
@@ -43,21 +65,25 @@ export function useAguiStream() {
       }
 
       const backendUrl =
-        process.env.NEXT_PUBLIC_BACKEND_API_URL ||
-        "http://localhost:8000";
+        process.env.NEXT_PUBLIC_BACKEND_API_URL || "http://localhost:8000";
       const endpoint = `${backendUrl}/agui`;
 
-      // POST user message to start streaming
+      // Request body matches the backend AGUIRequest schema (see
+      // apps/backend/tests/test_agui.py): messages carry an id, plus
+      // thread_id / run_id (snake_case) for multi-turn continuity.
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
-          // Optional: Include BU ID header (for multi-tenant routing)
-          // "x-bu-id": businessUnitId,
         },
         body: JSON.stringify({
-          messages: [{ role: "user", content: message }],
+          messages,
+          thread_id: threadId,
+          run_id:
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `run-${Date.now()}`,
         }),
       });
 
@@ -69,7 +95,6 @@ export function useAguiStream() {
         return;
       }
 
-      // Stream SSE events
       const reader = response.body?.getReader();
       if (!reader) {
         onError("Failed to read response stream");
@@ -89,27 +114,37 @@ export function useAguiStream() {
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
 
-        // Process complete lines
+        // Process every complete line; keep the trailing partial in the buffer.
         for (let i = 0; i < lines.length - 1; i++) {
           const line = lines[i].trim();
-          if (!line) continue;
+          if (!line || !line.startsWith("data:")) continue;
 
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6);
-            try {
-              const event = JSON.parse(data) as StreamEvent;
-              if (event.type === "token") {
-                onToken(event.data);
-              } else if (event.type === "error") {
-                onError(event.data);
-              }
-            } catch {
-              // Silently skip malformed JSON
-            }
+          const data = line.slice("data:".length).trim();
+          if (!data) continue;
+
+          let event: AguiEvent;
+          try {
+            event = JSON.parse(data) as AguiEvent;
+          } catch {
+            // Skip malformed / non-JSON frames (e.g. heartbeats)
+            continue;
+          }
+
+          switch (event.type) {
+            case "TEXT_MESSAGE_CONTENT":
+              if (event.delta) onToken(event.delta);
+              break;
+            case "RUN_ERROR":
+              onError(event.message || "The workflow reported an error.");
+              break;
+            case "RUN_FINISHED":
+              onDone();
+              return;
+            // RUN_STARTED, TEXT_MESSAGE_START/END and others are
+            // lifecycle markers with no UI payload here — ignore.
           }
         }
 
-        // Keep incomplete line in buffer
         buffer = lines[lines.length - 1];
       }
     } catch (err) {
