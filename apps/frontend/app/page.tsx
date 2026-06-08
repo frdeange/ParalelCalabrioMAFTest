@@ -2,18 +2,33 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { useMsal, useIsAuthenticated } from "@azure/msal-react";
+import { loginRequest } from "@/lib/msal-config";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const { instance } = useMsal();
+  const isAuthenticated = useIsAuthenticated();
+  const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Redirect already-authenticated users to chat
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.replace("/chat");
+    }
+  }, [isAuthenticated, router]);
+
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    // Placeholder for authentication - will be replaced by MSAL in issue #26
-    console.log("Login attempted:", { username, password });
-    setIsLoading(false);
+    try {
+      await instance.loginRedirect(loginRequest);
+    } catch (err) {
+      console.error("MSAL login error:", err);
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -40,46 +55,21 @@ export default function LoginPage() {
             Sign in to access supervisor chat interface
           </p>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Username Field */}
-            <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
-                Username
-              </label>
-              <input
-                id="username"
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter your username"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-                required
-              />
-            </div>
-
-            {/* Password Field */}
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                Password
-              </label>
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-                required
-              />
-            </div>
-
-            {/* Sign In Button */}
+          <form onSubmit={handleSignIn} className="space-y-6">
+            {/* Sign In with Microsoft Button */}
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold py-2 px-4 rounded-lg transition duration-200 flex items-center justify-center gap-2"
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 flex items-center justify-center gap-3"
             >
-              {isLoading ? "Signing in..." : "Sign In"}
+              {/* Microsoft logo mark */}
+              <svg width="20" height="20" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
+                <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
+                <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
+                <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
+              </svg>
+              {isLoading ? "Redirecting..." : "Sign in with Microsoft"}
             </button>
           </form>
 
