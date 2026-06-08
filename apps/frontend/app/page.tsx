@@ -1,84 +1,23 @@
 "use client";
 
-import Image from "next/image";
-import { useState } from "react";
-import { useMsal, useIsAuthenticated } from "@azure/msal-react";
-import { loginRequest } from "@/lib/msal-config";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useIsAuthenticated } from "@azure/msal-react";
 
-export default function LoginPage() {
-  const { instance } = useMsal();
-  const isAuthenticated = useIsAuthenticated();
+/**
+ * Root route: redirect authenticated users to /chat, everyone else to /login.
+ */
+export default function RootPage() {
   const router = useRouter();
-  const [isLoading, setIsLoading] = useState(false);
+  const isAuthenticated = useIsAuthenticated();
 
-  // Redirect already-authenticated users to chat
   useEffect(() => {
     if (isAuthenticated) {
       router.replace("/chat");
+    } else {
+      router.replace("/login");
     }
   }, [isAuthenticated, router]);
 
-  const handleSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    try {
-      await instance.loginRedirect(loginRequest);
-    } catch (err) {
-      console.error("MSAL login error:", err);
-      setIsLoading(false);
-    }
-  };
-
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-white to-gray-50 px-4">
-      <div className="w-full max-w-md">
-        {/* Calabrio Logo */}
-        <div className="flex justify-center mb-12">
-          <Image
-            src="/images/calabrio-logo.webp"
-            alt="Calabrio Logo"
-            width={180}
-            height={60}
-            priority
-            className="h-auto w-auto"
-          />
-        </div>
-
-        {/* Login Card */}
-        <div className="rounded-lg bg-white shadow-lg p-8">
-          <h1 className="text-2xl font-bold text-gray-900 mb-2 text-center">
-            Welcome to Calabrio WFM
-          </h1>
-          <p className="text-gray-600 text-center mb-8 text-sm">
-            Sign in to access supervisor chat interface
-          </p>
-
-          <form onSubmit={handleSignIn} className="space-y-6">
-            {/* Sign In with Microsoft Button */}
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold py-3 px-4 rounded-lg transition duration-200 flex items-center justify-center gap-3"
-            >
-              {/* Microsoft logo mark */}
-              <svg width="20" height="20" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
-                <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
-                <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
-                <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
-              </svg>
-              {isLoading ? "Redirecting..." : "Sign in with Microsoft"}
-            </button>
-          </form>
-
-          {/* Footer */}
-          <p className="text-center text-xs text-gray-500 mt-6">
-            Calabrio Workforce Management System
-          </p>
-        </div>
-      </div>
-    </div>
-  );
+  return null;
 }

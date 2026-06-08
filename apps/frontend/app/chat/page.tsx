@@ -1,18 +1,13 @@
 "use client";
 
-import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
-import { useMsal } from "@azure/msal-react";
+import { AuthGuard } from "@/components/auth/AuthGuard";
+import { useAuth } from "@/lib/use-auth";
 
 export default function ChatPage() {
-  const { accounts, instance } = useMsal();
-  const account = accounts[0];
-
-  const handleSignOut = () => {
-    instance.logoutRedirect({ postLogoutRedirectUri: "/" });
-  };
+  const { account, signOut } = useAuth();
 
   return (
-    <ProtectedRoute>
+    <AuthGuard>
       <div className="flex min-h-screen bg-gray-50">
         {/* Sidebar placeholder — full implementation in issue #27 */}
         <aside className="w-64 bg-[#1a1f36] text-white flex flex-col">
@@ -54,7 +49,7 @@ export default function ChatPage() {
           <div className="p-4 border-t border-white/10 text-sm">
             <p className="text-gray-400 truncate">{account?.username ?? ""}</p>
             <button
-              onClick={handleSignOut}
+              onClick={signOut}
               className="mt-2 text-gray-400 hover:text-white transition-colors text-xs"
             >
               Sign out
@@ -78,6 +73,6 @@ export default function ChatPage() {
           </div>
         </main>
       </div>
-    </ProtectedRoute>
+    </AuthGuard>
   );
 }

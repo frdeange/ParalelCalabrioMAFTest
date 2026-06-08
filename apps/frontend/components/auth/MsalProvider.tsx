@@ -6,8 +6,9 @@ import { msalConfig } from "@/lib/msal-config";
 
 /**
  * Singleton MSAL PublicClientApplication instance.
- * Created once at module load; safe for SSR because msal-browser
- * skips initialisation on the server.
+ * This file is a client component ("use client"), so it only runs in the browser.
+ * The PCA is created once at module load time; MSAL skips initialisation on the
+ * server because the module itself is never imported in a server context.
  */
 const msalInstance = new PublicClientApplication(msalConfig);
 

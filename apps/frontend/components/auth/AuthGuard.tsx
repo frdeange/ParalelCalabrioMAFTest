@@ -5,22 +5,19 @@ import { useIsAuthenticated, useMsal } from "@azure/msal-react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { loginRequest } from "@/lib/msal-config";
 
-interface ProtectedRouteProps {
+interface AuthGuardProps {
   children: React.ReactNode;
   /** Optional fallback rendered while MSAL determines auth state */
   fallback?: React.ReactNode;
 }
 
 /**
- * Higher-order component that redirects unauthenticated users to Entra ID login.
- * Renders `fallback` (or a spinner) while the interaction is in progress.
- *
- * Usage:
- *   <ProtectedRoute>
- *     <YourPage />
- *   </ProtectedRoute>
+ * AuthGuard — replaces the old ProtectedRoute.
+ * Redirects unauthenticated users to /login instead of triggering loginRedirect
+ * directly, keeping the login UX consistent and avoiding unexpected Entra ID
+ * redirects from deep routes.
  */
-export function ProtectedRoute({ children, fallback }: ProtectedRouteProps) {
+export function AuthGuard({ children, fallback }: AuthGuardProps) {
   const { instance, inProgress } = useMsal();
   const isAuthenticated = useIsAuthenticated();
   const redirectTriggered = useRef(false);
