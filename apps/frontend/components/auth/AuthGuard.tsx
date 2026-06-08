@@ -35,7 +35,7 @@ export function AuthGuard({ children, fallback }: AuthGuardProps) {
     }
   }, [isAuthenticated, inProgress, instance]);
 
-  if (inProgress !== InteractionStatus.None || (!isAuthenticated && !redirectTriggered.current)) {
+  if (inProgress !== InteractionStatus.None || !isAuthenticated) {
     return (
       fallback ?? (
         <div className="flex min-h-screen items-center justify-center">
@@ -43,10 +43,6 @@ export function AuthGuard({ children, fallback }: AuthGuardProps) {
         </div>
       )
     );
-  }
-
-  if (!isAuthenticated) {
-    return null;
   }
 
   return <>{children}</>;
