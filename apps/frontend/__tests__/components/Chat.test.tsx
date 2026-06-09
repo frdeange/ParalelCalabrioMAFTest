@@ -15,14 +15,18 @@ vi.mock("@/lib/agui/client", () => ({
   useAguiStream: () => ({ stream: streamImpl }),
 }));
 
+// jsdom doesn't implement scrollIntoView; stub it and restore the original
+// (if any) after each test so the mutation can't leak into other suites.
+const originalScrollIntoView = Element.prototype.scrollIntoView;
+
 beforeEach(() => {
   streamImpl.mockReset();
-  // jsdom doesn't implement scrollIntoView.
   Element.prototype.scrollIntoView = vi.fn();
 });
 
 afterEach(() => {
   vi.clearAllMocks();
+  Element.prototype.scrollIntoView = originalScrollIntoView;
 });
 
 describe("Chat", () => {
