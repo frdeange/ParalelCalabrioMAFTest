@@ -2,6 +2,7 @@
 
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { Chat } from "@/components/Chat";
+import { BuSelector } from "@/components/BuSelector";
 import { useAuth } from "@/lib/use-auth";
 
 export default function ChatPage() {
@@ -47,14 +48,17 @@ export default function ChatPage() {
             ))}
           </nav>
           {/* User info + sign-out */}
-          <div className="p-4 border-t border-white/10 text-sm">
-            <p className="text-gray-400 truncate">{account?.username ?? ""}</p>
-            <button
-              onClick={signOut}
-              className="mt-2 text-gray-400 hover:text-white transition-colors text-xs"
-            >
-              Sign out
-            </button>
+          <div className="p-4 border-t border-white/10 text-sm space-y-3">
+            <BuSelector />
+            <div>
+              <p className="text-gray-400 truncate">{account?.username ?? ""}</p>
+              <button
+                onClick={signOut}
+                className="mt-2 text-gray-400 hover:text-white transition-colors text-xs"
+              >
+                Sign out
+              </button>
+            </div>
           </div>
         </aside>
 
