@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #1e293b;
+
+  /* Calabrio brand palette (sampled from the reference Supervisor Assist UI) */
+  --calabrio-navy: #16224c;
+  --calabrio-blue: #2f6fed;
+  --calabrio-blue-dark: #2456c8;
+  --calabrio-input-band: #dbe9fb;
+  --calabrio-user-bubble: #e3e6f7;
+  --calabrio-assistant-bubble: #f5f7fb;
+  --calabrio-sidebar-active: #eef3fd;
+  --calabrio-border: #e2e8f0;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-calabrio-navy: var(--calabrio-navy);
+  --color-calabrio-blue: var(--calabrio-blue);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+/* ------------------------------------------------------------------ */
+/* Markdown rendering inside assistant messages                        */
+/* Mirrors the reference tables: bright-blue header, bordered cells.   */
+/* ------------------------------------------------------------------ */
+.markdown-body {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: #1e293b;
+}
+
+.markdown-body p {
+  margin: 0 0 0.5rem;
+}
+
+.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0.25rem 0 0.75rem;
+  padding-left: 1.4rem;
+}
+
+.markdown-body li {
+  margin: 0.15rem 0;
+}
+
+.markdown-body strong {
+  font-weight: 600;
+}
+
+.markdown-body code {
+  background: #eef2f7;
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.85em;
+}
+
+.markdown-body pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.markdown-body a {
+  color: var(--calabrio-blue);
+  text-decoration: underline;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75rem 0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--calabrio-border);
+}
+
+.markdown-body thead th {
+  background: var(--calabrio-blue);
+  color: #ffffff;
+  font-weight: 600;
+  text-align: left;
+  padding: 0.7rem 0.9rem;
+  white-space: nowrap;
+}
+
+.markdown-body tbody td {
+  padding: 0.6rem 0.9rem;
+  border-top: 1px solid var(--calabrio-border);
+  color: #334155;
+}
+
+.markdown-body tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
+.markdown-body tbody tr:first-child {
+  background: #eef3fd;
+}
