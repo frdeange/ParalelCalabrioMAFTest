@@ -62,6 +62,20 @@ classifiers = [
 #                                     sub-package.
 #   - ``pydantic-settings``          — we subclass ``BaseSettings``;
 #                                     ``pydantic`` alone does NOT include it.
+#   - ``aiohttp``                    — required by ``azure.identity.aio``'s
+#                                     async pipeline transport
+#                                     (``DefaultAzureCredential`` in
+#                                     ``app/lifespan.py``). Not pulled
+#                                     transitively, so the async credential
+#                                     raises ``ImportError`` at startup
+#                                     without it.
+#   - ``mcp``                        — the Model Context Protocol SDK that
+#                                     ``MCPStreamableHTTPTool`` (used in
+#                                     ``app/mcp/factory.py``) needs at
+#                                     connect time. ``agent-framework`` keeps
+#                                     it as an optional extra, so it must be
+#                                     declared explicitly or the workflow
+#                                     fails to open its MCP sessions.
 #
 # Tracked in issue #53.
 dependencies = [
@@ -72,6 +86,8 @@ dependencies = [
     "agent-framework-ag-ui==1.0.0rc3",
     "azure-monitor-opentelemetry>=1.6",
     "pydantic-settings>=2.5",
+    "aiohttp>=3.10",
+    "mcp>=1.0",
 ]
 
 [project.optional-dependencies]

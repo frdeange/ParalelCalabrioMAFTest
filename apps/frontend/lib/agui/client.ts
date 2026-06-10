@@ -33,6 +33,8 @@ interface AguiEvent {
   type: string;
   delta?: string;
   message?: string;
+  /** STEP_STARTED / STEP_FINISHED carry the executor id as ``stepName``. */
+  stepName?: string;
 }
 
 export interface StreamParams {
@@ -46,6 +48,14 @@ export interface StreamHandlers {
   onToken: (token: string) => void;
   onError: (error: string) => void;
   onDone: () => void;
+  /**
+   * Fired when the workflow enters a new executor (AG-UI ``STEP_STARTED``).
+   * ``stepName`` is the backend executor id (``intent_step``,
+   * ``sql_builder_step``, ``query_executor_step``) which the UI maps to a
+   * human-friendly progress message. Optional so existing callers/tests
+   * that don't care about progress keep working.
+   */
+  onStep?: (stepName: string) => void;
 }
 
 /**
@@ -59,7 +69,7 @@ export function useAguiStream() {
 
   const stream = async (
     { messages, threadId }: StreamParams,
-    { onToken, onError, onDone }: StreamHandlers
+    { onToken, onError, onDone, onStep }: StreamHandlers
   ) => {
     try {
       // Acquire MSAL token with API scope
@@ -145,6 +155,9 @@ export function useAguiStream() {
           }
 
           switch (event.type) {
+            case "STEP_STARTED":
+              if (event.stepName) onStep?.(event.stepName);
+              break;
             case "TEXT_MESSAGE_CONTENT":
               if (event.delta) onToken(event.delta);
               break;

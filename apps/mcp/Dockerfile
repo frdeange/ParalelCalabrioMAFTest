@@ -40,6 +40,7 @@ RUN apt-get update \
  && apt-get update \
  && ACCEPT_EULA=Y apt-get install --no-install-recommends -y msodbcsql18 \
  && apt-get purge -y --auto-remove curl gnupg \
+ && ACCEPT_EULA=Y apt-get install --no-install-recommends -y libgssapi-krb5-2 \
  && rm -rf /var/lib/apt/lists/*
 
 ARG APP_UID=10001

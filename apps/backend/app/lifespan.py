@@ -127,13 +127,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         mcp_schema = await stack.enter_async_context(
             build_mcp_tool(
                 settings,
-                allowed_tools=["listTables", "getSchema"],
+                allowed_tools=["schema_list_tables", "schema_describe_table"],
             )
         )
         mcp_exec = await stack.enter_async_context(
             build_mcp_tool(
                 settings,
-                allowed_tools=["executeQuery"],
+                allowed_tools=["query_execute"],
             )
         )
 

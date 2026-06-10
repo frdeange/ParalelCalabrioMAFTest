@@ -2,17 +2,18 @@
  * Multi-turn chat component wired to the backend MAF workflow over the
  * AG-UI SSE protocol (via `useAguiStream`).
  *
- * Features:
- * - Real-time streaming chat UI with message history
- * - Token streaming visualization
- * - Error toast notifications
- * - Auto-scroll to latest message
- * - Loading state and disabled input during streaming
+ * Visual design follows the Calabrio "Supervisor Assist" reference
+ * (docs/referenceImages): lavender user bubbles, markdown-rendered
+ * assistant replies (tables included), a light-blue input band with a
+ * circular send button, and a live agent-progress indicator that
+ * reflects which workflow executor is currently running.
  */
 
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useAguiStream, type AguiMessage } from "@/lib/agui/client";
 
 export interface ChatMessage {
@@ -22,11 +23,29 @@ export interface ChatMessage {
   timestamp: Date;
 }
 
-export function Chat() {
+/**
+ * Maps backend workflow executor ids (AG-UI ``STEP_STARTED`` ``stepName``)
+ * to the user-facing progress message shown while that agent runs.
+ */
+const AGENT_PROGRESS: Record<string, string> = {
+  intent_step: "Understanding your request",
+  sql_builder_step: "Generating database request",
+  query_executor_step: "Almost finished responding",
+};
+
+export interface ChatProps {
+  /** Display name used in the welcome heading ("Hello, <name>!"). */
+  userName?: string;
+}
+
+export function Chat({ userName }: ChatProps = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Friendly progress message for the agent currently running, or null
+  // when idle / once the assistant has started streaming its answer.
+  const [progress, setProgress] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // Stable thread id for the whole session so the backend can persist
   // and reload multi-turn history (Cosmos chat-history). Generated lazily
@@ -44,14 +63,14 @@ export function Chat() {
   };
   const { stream } = useAguiStream();
 
-  // Auto-scroll to bottom on new messages
+  // Auto-scroll to bottom on new messages / progress changes
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, progress]);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
@@ -69,6 +88,7 @@ export function Chat() {
     setMessages((prev) => [...prev, userMessage]);
     setInputValue("");
     setIsLoading(true);
+    setProgress(AGENT_PROGRESS.intent_step);
 
     // Build the full history (with stable ids) the backend expects.
     const history: AguiMessage[] = [...messages, userMessage].map((m) => ({
@@ -85,8 +105,15 @@ export function Chat() {
       await stream(
         { messages: history, threadId: getThreadId() },
         {
+          onStep: (stepName) => {
+            // Surface the friendly phase message for known executors;
+            // ignore unknown / superstep markers.
+            const label = AGENT_PROGRESS[stepName];
+            if (label) setProgress(label);
+          },
           onToken: (token) => {
-            // Stream token received
+            // Keep the active executor progress visible while tokens stream.
+            // The indicator is cleared on onDone/onError.
             assistantContent += token;
             setMessages((prev) => {
               const lastMsg = prev[prev.length - 1];
@@ -110,10 +137,12 @@ export function Chat() {
           onError: (errorMsg) => {
             // Error occurred
             setError(errorMsg);
+            setProgress(null);
             setIsLoading(false);
           },
           onDone: () => {
             // Stream completed
+            setProgress(null);
             setIsLoading(false);
           },
         }
@@ -138,6 +167,7 @@ export function Chat() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setError(`Failed to send message: ${message}`);
+      setProgress(null);
       setIsLoading(false);
     }
   };
@@ -152,97 +182,147 @@ export function Chat() {
   return (
     <div className="flex flex-col h-full bg-white">
       {/* Chat Messages Container */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 py-6 md:px-10">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-center">
             <div className="max-w-md">
-              <h2 className="text-2xl font-semibold text-gray-800 mb-2">
-                Welcome to Calabrio WFM Chat
+              <h2 className="text-3xl font-bold text-slate-800 mb-3">
+                Hello{userName ? `, ${userName}` : ""}!
               </h2>
-              <p className="text-gray-600">
-                Send a message to start a conversation with your workforce
-                management assistant.
+              <p className="text-slate-500 text-lg">
+                What can I help you with today?
               </p>
             </div>
           </div>
         ) : (
-          messages.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${
-                message.role === "user" ? "justify-end" : "justify-start"
-              }`}
-            >
-              <div
-                className={`max-w-xs lg:max-w-md px-4 py-3 rounded-lg ${
-                  message.role === "user"
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-200 text-gray-800"
-                }`}
-              >
-                <p className="whitespace-pre-wrap break-words">
-                  {message.content}
-                </p>
-                <div
-                  className={`text-xs mt-2 ${
-                    message.role === "user"
-                      ? "text-blue-100"
-                      : "text-gray-600"
-                  }`}
-                >
-                  {message.timestamp.toLocaleTimeString()}
+          <div className="mx-auto w-full max-w-4xl space-y-5">
+            {messages.map((message) =>
+              message.role === "user" ? (
+                <div key={message.id} className="flex justify-end">
+                  <div className="max-w-[80%]">
+                    <div className="rounded-2xl rounded-tr-sm bg-[var(--calabrio-user-bubble)] px-4 py-3 text-slate-800">
+                      <p className="whitespace-pre-wrap break-words">
+                        {message.content}
+                      </p>
+                    </div>
+                    <div className="mt-1 text-right text-xs text-slate-400">
+                      {message.timestamp.toLocaleTimeString()}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div key={message.id} className="flex justify-start">
+                  <div className="w-full max-w-[95%]">
+                    <div className="rounded-2xl rounded-tl-sm bg-[var(--calabrio-assistant-bubble)] px-4 py-3 text-slate-800">
+                      <div className="markdown-body">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-400">
+                      {message.timestamp.toLocaleTimeString()}
+                    </div>
+                  </div>
+                </div>
+              )
+            )}
+
+            {/* Agent progress indicator */}
+            {progress && (
+              <div className="flex justify-start" aria-live="polite">
+                <div className="flex items-center gap-3 rounded-2xl rounded-tl-sm bg-[var(--calabrio-assistant-bubble)] px-4 py-3">
+                  <span className="flex gap-1">
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--calabrio-blue)]" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--calabrio-blue)] [animation-delay:0.15s]" />
+                    <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--calabrio-blue)] [animation-delay:0.3s]" />
+                  </span>
+                  <span className="text-sm font-medium text-slate-600">
+                    {progress}
+                  </span>
                 </div>
               </div>
-            </div>
-          ))
-        )}
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="max-w-xs lg:max-w-md px-4 py-3 rounded-lg bg-gray-200">
-              <div className="flex space-x-2">
-                <div className="w-2 h-2 bg-gray-600 rounded-full animate-bounce"></div>
-                <div className="w-2 h-2 bg-gray-600 rounded-full animate-bounce delay-100"></div>
-                <div className="w-2 h-2 bg-gray-600 rounded-full animate-bounce delay-200"></div>
-              </div>
-            </div>
+            )}
+
+            <div ref={messagesEndRef} />
           </div>
         )}
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Error Toast */}
       {error && (
-        <div className="mx-6 mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+        <div className="mx-auto mb-4 w-full max-w-4xl rounded-lg border border-red-200 bg-red-50 p-4">
           <p className="text-sm text-red-700">{error}</p>
           <button
             onClick={() => setError(null)}
-            className="text-xs text-red-600 hover:text-red-800 mt-2 underline"
+            className="mt-2 text-xs text-red-600 underline hover:text-red-800"
           >
             Dismiss
           </button>
         </div>
       )}
 
-      {/* Input Area */}
-      <div className="border-t border-gray-200 bg-white p-6">
-        <div className="flex gap-3">
+      {/* Input Area — light-blue band per the Calabrio reference */}
+      <div className="bg-[var(--calabrio-input-band)] px-4 py-4 md:px-10">
+        <div className="mx-auto flex w-full max-w-4xl items-end gap-3">
           <textarea
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
             disabled={isLoading}
             placeholder="Type your message... (Shift+Enter for new line, Enter to send)"
-            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 disabled:bg-gray-100 disabled:text-gray-500 resize-none max-h-32"
-            rows={3}
+            className="max-h-32 flex-1 resize-none rounded-xl border border-white/70 bg-white px-4 py-3 text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--calabrio-blue)] disabled:bg-gray-100 disabled:text-gray-500"
+            rows={1}
           />
           <button
             onClick={handleSendMessage}
             disabled={isLoading || !inputValue.trim()}
-            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-semibold rounded-lg transition duration-200 self-end"
+            aria-label="Send"
+            title="Send"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[var(--calabrio-blue)] text-white transition duration-200 hover:bg-[var(--calabrio-blue-dark)] disabled:cursor-not-allowed disabled:bg-blue-300"
           >
-            {isLoading ? "Sending..." : "Send"}
+            {isLoading ? (
+              <svg
+                className="h-5 w-5 animate-spin"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                />
+              </svg>
+            ) : (
+              <svg
+                className="h-5 w-5"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <line x1="22" y1="2" x2="11" y2="13" />
+                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+              </svg>
+            )}
           </button>
         </div>
+        <p className="mt-3 text-center text-xs text-slate-500">
+          Supervisor Assist is a generative AI-based solution and may make
+          mistakes.
+        </p>
       </div>
     </div>
   );
