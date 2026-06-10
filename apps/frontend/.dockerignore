@@ -1,0 +1,33 @@
+# Build artifacts & dependencies — restored/rebuilt inside the image.
+node_modules
+.next
+out
+build
+dist
+
+# Local env & secrets — never bake into the image.
+.env
+.env.*
+!.env.example
+
+# Tests & tooling not needed at build time.
+e2e
+tests
+test-results
+playwright-report
+blob-report
+playwright/.cache
+coverage
+.vitest
+
+# VCS & editor noise.
+.git
+.gitignore
+.vscode
+*.log
+npm-debug.log*
+
+# Docker meta.
+Dockerfile
+.dockerignore
+README.md

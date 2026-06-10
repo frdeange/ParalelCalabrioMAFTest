@@ -75,8 +75,8 @@ def test_sql_builder_prompt_renders_placeholders() -> None:
     # PLAN decision D10 invariants: SqlBuilder owns table discovery and never
     # depends on ``intentResult.candidate_tables``.
     assert "candidate_tables" not in rendered
-    assert "listTables" in rendered
-    assert "getSchema" in rendered
+    assert "schema_list_tables" in rendered
+    assert "schema_describe_table" in rendered
     assert "Forbidden: INSERT, UPDATE, DELETE" in rendered
 
 
@@ -112,5 +112,5 @@ def test_query_executor_prompt_renders_placeholders() -> None:
     assert "userLanguage: es" in rendered
 
     # Invariants the executor relies on:
-    assert "executeQuery (MCP)" in rendered
+    assert "query_execute (MCP)" in rendered
     assert "recall_conversation (function)" in rendered

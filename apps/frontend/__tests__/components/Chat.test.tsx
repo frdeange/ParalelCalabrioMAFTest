@@ -9,6 +9,7 @@ type Handlers = {
   onToken: (t: string) => void;
   onError: (e: string) => void;
   onDone: () => void;
+  onStep?: (stepName: string) => void;
 };
 const streamImpl = vi.fn();
 vi.mock("@/lib/agui/client", () => ({
@@ -32,7 +33,12 @@ afterEach(() => {
 describe("Chat", () => {
   it("shows the welcome empty state initially", () => {
     render(<Chat />);
-    expect(screen.getByText(/welcome to calabrio wfm chat/i)).toBeInTheDocument();
+    expect(screen.getByText(/what can i help you with today/i)).toBeInTheDocument();
+  });
+
+  it("greets the user by name when provided", () => {
+    render(<Chat userName="Alex" />);
+    expect(screen.getByText(/hello, alex!/i)).toBeInTheDocument();
   });
 
   it("disables Send while the input is empty", () => {
@@ -125,5 +131,22 @@ describe("Chat", () => {
       "   {Enter}",
     );
     expect(streamImpl).not.toHaveBeenCalled();
+  });
+
+  it("shows the agent progress message while a step runs", async () => {
+    streamImpl.mockImplementation(
+      async (_params: unknown, handlers: Handlers) => {
+        handlers.onStep?.("sql_builder_step");
+      },
+    );
+
+    const user = userEvent.setup();
+    render(<Chat />);
+    await user.type(screen.getByPlaceholderText(/type your message/i), "hi");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(
+      await screen.findByText(/generating database request/i),
+    ).toBeInTheDocument();
   });
 });

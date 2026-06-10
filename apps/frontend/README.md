@@ -1,53 +1,159 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Frontend - apps/frontend
 
-## Getting Started
+Next.js web client for ParalelCalabrioMAF v2.
 
-First, run the development server:
+This service is responsible for:
+
+- Entra ID authentication (MSAL redirect flow).
+- Route protection and session continuity.
+- Real-time chat UX over AG-UI SSE.
+- Optional POC Business Unit override header emission.
+
+## 1. Runtime Role in the Platform
+
+The frontend sits at the user edge and speaks to the backend AG-UI endpoint (`/agui`) through APIM. It does not execute SQL and does not orchestrate model workflows.
+
+High-level responsibilities:
+
+1. Login and token lifecycle.
+2. Chat message capture and rendering.
+3. AG-UI event stream handling.
+4. User-friendly progress and error states.
+
+## 2. Main User Flows
+
+### 2.1 Login
+
+1. User lands on `/login`.
+2. User signs in with Microsoft.
+3. MSAL redirects back to configured redirect URI.
+4. Authenticated users are routed to `/chat`.
+
+### 2.2 Chat Turn
+
+1. User submits a message.
+2. Frontend acquires API token silently.
+3. Frontend sends full message history + stable `thread_id` to `/agui`.
+4. Frontend parses SSE frames and updates UI incrementally.
+5. On completion, loading/progress states are cleared.
+
+## 3. AG-UI Event Handling
+
+The frontend consumes `data: { ... }` SSE frames and reacts to these event types:
+
+- `STEP_STARTED`: map workflow executor id to a friendly progress label.
+- `TEXT_MESSAGE_CONTENT`: append streamed token text.
+- `RUN_ERROR`: show a recoverable error message.
+- `RUN_FINISHED`: stop loading state.
+
+Other lifecycle events are ignored when they do not carry UI payload.
+
+## 4. Business Unit (POC) Behavior
+
+When POC override is enabled, frontend can send `x-debug-bu` with the selected BU value. APIM policy controls whether this is accepted.
+
+Important: this is an environment-governed behavior and must not be treated as trusted identity by services behind APIM.
+
+## 5. Project Structure (Frontend)
+
+```
+app/
+	layout.tsx            # App shell and providers
+	page.tsx              # Root redirect logic
+	login/page.tsx        # Login experience
+	chat/page.tsx         # Chat workspace
+components/
+	Chat.tsx              # Main chat UI + streaming rendering
+	BuSelector.tsx        # BU selector (POC behavior)
+	auth/
+		AuthGuard.tsx       # Route guard behavior
+		MsalProvider.tsx    # MSAL provider wiring
+lib/
+	agui/client.ts        # SSE protocol client and event mapping
+	use-auth.ts           # Auth helper hook
+	msal-config.ts        # MSAL and scopes config
+	bu.ts                 # BU selection utilities
+```
+
+## 6. Local Development
+
+Install and run:
+
+```bash
+cd apps/frontend
+npm install
+npm run dev
+```
+
+Default local URL: `http://localhost:3000`
+
+## 7. Environment Variables
+
+Key variables (see `.env.local.example` in this folder):
+
+- `NEXT_PUBLIC_AZURE_CLIENT_ID`
+- `NEXT_PUBLIC_AZURE_TENANT_ID`
+- `NEXT_PUBLIC_REDIRECT_URI`
+- `NEXT_PUBLIC_API_SCOPE`
+- `NEXT_PUBLIC_BACKEND_API_URL`
+
+The MSAL configuration fails fast in browser runtime when required auth variables are missing.
+
+## 8. Scripts
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run build
+npm run start
+npm run lint
+npm run test
+npm run test:watch
+npm run test:coverage
+npm run e2e
+npm run e2e:ui
+npm run e2e:report
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 9. Testing
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 9.1 Unit Tests
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Framework: Vitest + React Testing Library.
+- Test location: `__tests__/` mirroring `components/` and `lib/`.
+- Coverage gate is configured in `vitest.config.ts`.
 
-## Testing
-
-Unit tests use [Vitest](https://vitest.dev) with
-[React Testing Library](https://testing-library.com/docs/react-testing-library/intro)
-in a jsdom environment. Tests live under `__tests__/` mirroring the
-`components/` and `lib/` structure.
+Run unit suite:
 
 ```bash
-npm run test           # run the suite once (headless)
-npm run test:watch     # watch mode
-npm run test:coverage  # run with a coverage report (≥ 60% gate)
+npm run test
 ```
 
-Coverage is collected for `components/` and `lib/` (excluding config/glue
-modules `lib/msal-config.ts` and `components/auth/MsalProvider.tsx`, which
-only wire singletons). The thresholds are enforced in `vitest.config.ts`.
+Coverage run:
 
-## Learn More
+```bash
+npm run test:coverage
+```
 
-To learn more about Next.js, take a look at the following resources:
+### 9.2 End-to-End Tests
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Playwright scenarios are under `e2e/`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Run e2e suite:
 
-## Deploy on Vercel
+```bash
+npm run e2e
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 10. Operational Notes
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- The frontend is stateless; conversation continuity is server-side and keyed by `thread_id`.
+- Authentication and API token scope must match APIM/backend expectations.
+- Frontend should never embed backend trust logic; trust contracts are enforced at APIM and backend identity dependencies.
+
+## 11. Related Documentation
+
+- Project architecture deep dive: `docs/architecture.md`
+- Runtime sequence diagrams: `docs/agent-and-service-flows.md`
+- Global plan and phased roadmap: `PLAN.md`
+- Backend details: `apps/backend/README.md`
+- MCP details: `apps/mcp/README.md`

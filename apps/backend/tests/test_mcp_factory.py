@@ -32,13 +32,13 @@ def test_build_mcp_tool_uses_settings_defaults() -> None:
         mcp_tool_prefix="",
     )
 
-    tool = build_mcp_tool(settings, allowed_tools=["listTables", "getSchema"])
+    tool = build_mcp_tool(settings, allowed_tools=["schema_list_tables", "schema_describe_table"])
 
     assert tool.name == "wfm-data"
     assert tool.url == "https://test.local/mcp-api-dev/mcp/"
     # Empty prefix collapses to ``None`` so MAF does not prepend "_".
     assert tool.tool_name_prefix is None
-    assert tool.allowed_tools == ["listTables", "getSchema"]
+    assert tool.allowed_tools == ["schema_list_tables", "schema_describe_table"]
 
 
 def test_build_mcp_tool_applies_prefix_from_settings() -> None:
@@ -47,7 +47,7 @@ def test_build_mcp_tool_applies_prefix_from_settings() -> None:
     # ``"wfm"`` on the public attribute.
     settings = _settings(mcp_tool_prefix="wfm_")
 
-    tool = build_mcp_tool(settings, allowed_tools=["listTables"])
+    tool = build_mcp_tool(settings, allowed_tools=["schema_list_tables"])
 
     assert tool.tool_name_prefix == "wfm"
 
@@ -56,7 +56,7 @@ def test_build_mcp_tool_explicit_name_overrides_settings() -> None:
     settings = _settings(mcp_tool_name="wfm-data")
 
     tool = build_mcp_tool(
-        settings, allowed_tools=["executeQuery"], name="wfm-data-exec"
+        settings, allowed_tools=["query_execute"], name="wfm-data-exec"
     )
 
     assert tool.name == "wfm-data-exec"
@@ -67,7 +67,7 @@ def test_build_mcp_tool_explicit_prefix_overrides_settings() -> None:
 
     tool = build_mcp_tool(
         settings,
-        allowed_tools=["listTables"],
+        allowed_tools=["schema_list_tables"],
         tool_name_prefix="other_",
     )
 
@@ -80,9 +80,9 @@ def test_build_mcp_tool_allowed_tools_round_trips() -> None:
 
     # ``frozenset`` is a Collection but not a list — the factory must
     # normalise to list so MAF can serialise it.
-    tool = build_mcp_tool(settings, allowed_tools=frozenset(["executeQuery"]))
+    tool = build_mcp_tool(settings, allowed_tools=frozenset(["query_execute"]))
 
-    assert tool.allowed_tools == ["executeQuery"]
+    assert tool.allowed_tools == ["query_execute"]
 
 
 def test_build_mcp_tool_rejects_bare_string_allowed_tools() -> None:

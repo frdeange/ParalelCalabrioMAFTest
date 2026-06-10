@@ -87,6 +87,28 @@ describe("useAguiStream", () => {
     expect(onDone).toHaveBeenCalledTimes(1);
   });
 
+  it("forwards STEP_STARTED stepName to onStep", async () => {
+    acquireToken.mockResolvedValue("jwt-token");
+    const body =
+      frame({ type: "RUN_STARTED" }) +
+      frame({ type: "STEP_STARTED", stepName: "intent_step" }) +
+      frame({ type: "STEP_STARTED", stepName: "sql_builder_step" }) +
+      frame({ type: "RUN_FINISHED" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(sseResponse(body));
+
+    const onStep = vi.fn();
+    const { result } = renderHook(() => useAguiStream());
+    await result.current.stream(params, {
+      onToken: vi.fn(),
+      onError: vi.fn(),
+      onDone: vi.fn(),
+      onStep,
+    });
+
+    expect(onStep).toHaveBeenNthCalledWith(1, "intent_step");
+    expect(onStep).toHaveBeenNthCalledWith(2, "sql_builder_step");
+  });
+
   it("attaches the bearer token and posts the AGUIRequest body", async () => {
     acquireToken.mockResolvedValue("jwt-token");
     const fetchSpy = vi
