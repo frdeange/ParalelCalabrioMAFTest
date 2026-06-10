@@ -149,4 +149,22 @@ describe("Chat", () => {
       await screen.findByText(/generating database request/i),
     ).toBeInTheDocument();
   });
+
+  it("keeps query executor progress visible while tokens are streaming", async () => {
+    streamImpl.mockImplementation(
+      async (_params: unknown, handlers: Handlers) => {
+        handlers.onStep?.("query_executor_step");
+        handlers.onToken("partial");
+      },
+    );
+
+    const user = userEvent.setup();
+    render(<Chat />);
+    await user.type(screen.getByPlaceholderText(/type your message/i), "hi");
+    await user.click(screen.getByRole("button", { name: /send/i }));
+
+    expect(
+      await screen.findByText(/almost finished responding/i),
+    ).toBeInTheDocument();
+  });
 });

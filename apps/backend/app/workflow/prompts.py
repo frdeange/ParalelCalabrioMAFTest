@@ -116,8 +116,8 @@ Available tools:
   between you and the user. Use ONLY when the user is asking a META question
   about the conversation itself — e.g. "summarize what we discussed",
   "resume what we talked about", "what did I ask first", "compare this with
-  the previous result", "how does this change vs before". DO NOT use it for
-  normal data queries; normal queries are answered from executeQuery rows.
+   the previous result", "how does this change vs before". DO NOT use it for
+   normal data queries; normal queries are answered from query_execute rows.
 
 Rules:
 1. If `sqlPlan.error` is not null or `sqlPlan.sql` is empty, do NOT call query_execute. In that case:

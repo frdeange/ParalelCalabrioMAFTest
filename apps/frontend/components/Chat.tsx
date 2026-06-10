@@ -112,9 +112,8 @@ export function Chat({ userName }: ChatProps = {}) {
             if (label) setProgress(label);
           },
           onToken: (token) => {
-            // First token means the assistant is answering — drop the
-            // progress indicator so the reply takes over.
-            setProgress(null);
+            // Keep the active executor progress visible while tokens stream.
+            // The indicator is cleared on onDone/onError.
             assistantContent += token;
             setMessages((prev) => {
               const lastMsg = prev[prev.length - 1];
@@ -321,8 +320,8 @@ export function Chat({ userName }: ChatProps = {}) {
           </button>
         </div>
         <p className="mt-3 text-center text-xs text-slate-500">
-          Supervisor assist is a generative AI-based solution and may make
-          mistakes
+          Supervisor Assist is a generative AI-based solution and may make
+          mistakes.
         </p>
       </div>
     </div>

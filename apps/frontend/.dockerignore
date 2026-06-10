@@ -13,6 +13,7 @@ dist
 # Tests & tooling not needed at build time.
 e2e
 tests
+__tests__
 test-results
 playwright-report
 blob-report
